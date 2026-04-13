@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
-
 import InfiniteBoard from "./components/InfiniteBoard";
+import { MarkdownRenderer } from "./components/MarkdownRenderer";
 
-type Note = {
+export type Note = {
   id: string;
   title: string;
   content: string;
@@ -20,7 +20,7 @@ type Tab = {
 
 
 // YouTubeのURLから動画IDを抽出するヘルパー関数
-const extractYouTubeIds = (text: string): string[] => {
+export const extractYouTubeIds = (text: string): string[] => {
   if (!text) return [];
   const ids: string[] = [];
   const regex = /(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi;
@@ -31,8 +31,16 @@ const extractYouTubeIds = (text: string): string[] => {
   return Array.from(new Set(ids));
 };
 
+interface AutoResizeTextareaProps {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+  onBlur?: () => void;
+}
+
 // オートリサイズ機能を持つテキストエリア
-const AutoResizeTextarea = ({ value, onChange, placeholder, autoFocus, onBlur }: any) => {
+const AutoResizeTextarea = ({ value, onChange, placeholder, autoFocus, onBlur }: AutoResizeTextareaProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const resize = () => {
@@ -44,6 +52,7 @@ const AutoResizeTextarea = ({ value, onChange, placeholder, autoFocus, onBlur }:
 
   useLayoutEffect(() => {
     resize();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   return (
@@ -93,9 +102,17 @@ const renderTextWithLinks = (text: string) => {
   });
 };
 
-// Readモード（リンクがクリック可能）とEditモードを切り替えるハイブリッドブロック
-const RichTextBlock = ({ value, onChange, placeholder }: any) => {
-  const [isEditing, setIsEditing] = useState(!value); // 空なら最初から編集モード
+interface RichTextBlockProps {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  notes: Note[];
+  onNavigate: (noteId: string, title: string) => void;
+}
+
+// Readモード（Markdownレンダリング）とEditモードを切り替えるハイブリッドブロック
+const RichTextBlock = ({ value, onChange, placeholder, notes, onNavigate }: RichTextBlockProps) => {
+  const [isEditing, setIsEditing] = useState(!value);
 
   if (isEditing) {
     return (
@@ -104,26 +121,36 @@ const RichTextBlock = ({ value, onChange, placeholder }: any) => {
         onChange={onChange}
         placeholder={placeholder}
         autoFocus={true}
-        onBlur={() => {
-          setIsEditing(false); // フォーカスが外れたらReadモードに戻る
-        }}
+        onBlur={() => { setIsEditing(false); }}
       />
     );
   }
 
   return (
-    <div 
+    <div
       className="w-full block bg-transparent border-none text-base outline-none resize-none leading-relaxed text-white/90 min-h-[50px] py-1 cursor-text"
       onClick={() => setIsEditing(true)}
     >
-      {value ? renderTextWithLinks(value) : <span className="text-white/20">{placeholder}</span>}
+      {value
+        ? <MarkdownRenderer
+            content={value}
+            notes={notes}
+            onNavigate={onNavigate}
+            onContentChange={onChange}
+          />
+        : <span className="text-white/20">{placeholder}</span>
+      }
     </div>
   );
 };
 
-// インライン埋め込みを可能にするブロックエディタ
-const BlockEditor = ({ content, updateContent }: { content: string, updateContent: (c: string) => void }) => {
-  // `[YouTube URL]` の形式をブロック分割用として検知
+// インライン埋め込みを可能にするMarkdown対応ブロックエディタ
+const BlockEditor = ({ content, updateContent, notes, activateNote }: {
+  content: string;
+  updateContent: (c: string) => void;
+  notes: Note[];
+  activateNote: (id: string | null, fallbackTitle?: string) => void;
+}) => {
   const regex = /(\[(?:https?:\/\/(?:www\.)?youtube\.com\/(?:watch\?v=|embed\/)[a-zA-Z0-9_-]+|https?:\/\/youtu\.be\/[a-zA-Z0-9_-]+)\])/gi;
   const chunks = content.split(regex);
 
@@ -132,16 +159,17 @@ const BlockEditor = ({ content, updateContent }: { content: string, updateConten
     updateContent(newContent);
   };
 
+  const onNavigate = (noteId: string, title: string) => activateNote(noteId, title);
+
   return (
     <div className="block min-h-[35vh]">
       {chunks.map((chunk, index) => {
-        const isVideo = index % 2 !== 0; // 奇数インデックスは動画URL
+        const isVideo = index % 2 !== 0;
 
         if (isVideo) {
           const videoId = chunk.match(/(?:v=|embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
           return (
             <div key={`${index}-${chunk}`} className="relative group my-4 rounded-xl overflow-hidden shadow-2xl w-full border border-white/10" style={{ paddingTop: '56.25%' }}>
-               {/* ホバー時のみ現れるURL直接編集バー（これを消せば動画も消える） */}
                <input 
                  className="absolute top-0 right-0 z-10 w-full text-right py-2 px-4 text-[10px] font-mono text-white/0 bg-transparent border-none outline-none group-hover:text-white/60 focus:text-white focus:bg-black/80 transition-all cursor-text"
                  value={chunk}
@@ -167,7 +195,11 @@ const BlockEditor = ({ content, updateContent }: { content: string, updateConten
               key={`text-${index}`}
               value={chunk}
               onChange={(val: string) => handleUpdateChunk(index, val)}
-              placeholder={index === 0 && chunks.length === 1 ? "思考を展開する...\n『[YouTubeのURL]』と貼り付けるとインラインで動画に変わります。" : ""}
+              placeholder={index === 0 && chunks.length === 1
+                ? "# 見出し  **太字**  *イタリック*  `コード`\n- [ ] Todoリスト\n[[ページ名]] でリンク \u2014 思考を展開する..."
+                : ""}
+              notes={notes}
+              onNavigate={onNavigate}
             />
           );
         }
@@ -181,6 +213,7 @@ export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [dailyContent, setDailyContent] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // タブ管理システム
   const [openedTabs, setOpenedTabs] = useState<Tab[]>([{ id: null, title: "WORKSPACE" }]);
@@ -427,6 +460,7 @@ export default function Home() {
     const handleDragStart = (e: React.DragEvent) => {
       e.stopPropagation();
       setDraggedNodeId(note.id);
+      e.dataTransfer.setData("application/nemo-note-id", note.id);
     };
 
     const handleDragOver = (e: React.DragEvent) => {
@@ -532,7 +566,7 @@ export default function Home() {
           onMouseDown={() => setIsResizing(true)}
         />
 
-        <div className="px-4 mb-4 flex gap-2">
+        <div className="px-4 mb-2 flex gap-2">
           <button 
             className="flex-1 flex items-center justify-center gap-1 bg-white/10 hover:bg-white/20 text-white font-medium text-sm py-2 px-2 rounded-lg transition-colors border border-white/5 shadow-sm"
             onClick={() => handleCreateNewNote('document')}
@@ -547,15 +581,66 @@ export default function Home() {
           </button>
         </div>
 
+        {/* 全文検索インプット */}
+        <div className="px-4 mb-3">
+          <input
+            type="search"
+            placeholder="🔍 検索..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white/70 placeholder:text-white/25 outline-none focus:border-white/30 transition-colors"
+          />
+        </div>
+
         <div className="flex-1 overflow-y-auto custom-scrollbar">
-          <div className="flex flex-col gap-0.5 mt-2">
-            {rootNotes.map(note => (
-              <SidebarNode key={note.id} note={note} />
-            ))}
-            {rootNotes.length === 0 && (
-              <div className="px-6 py-4 text-xs text-white/30">テキストファイルがありません。</div>
-            )}
-          </div>
+          {searchQuery ? (
+            /* 検索結果表示 */
+            <div className="flex flex-col gap-0.5 px-2">
+              {notes
+                .filter(n =>
+                  n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  n.content.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+                .slice(0, 30)
+                .map(note => {
+                  const excerptIdx = note.content.toLowerCase().indexOf(searchQuery.toLowerCase());
+                  const excerpt = excerptIdx >= 0
+                    ? note.content.slice(Math.max(0, excerptIdx - 20), excerptIdx + 60)
+                    : note.content.slice(0, 60);
+                  return (
+                    <div
+                      key={note.id}
+                      onClick={() => { activateNote(note.id, note.title); setSearchQuery(''); }}
+                      className={`p-2 rounded-lg cursor-pointer transition-all hover:bg-white/10 ${
+                        activeTabId === note.id ? 'bg-white/10' : ''
+                      }`}
+                    >
+                      <div className="text-sm font-medium text-white truncate">{note.title || '無題'}</div>
+                      {excerpt && (
+                        <div className="text-[10px] text-white/40 mt-0.5 line-clamp-2">{excerpt}&hellip;</div>
+                      )}
+                    </div>
+                  );
+                })
+              }
+              {notes.filter(n =>
+                n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                n.content.toLowerCase().includes(searchQuery.toLowerCase())
+              ).length === 0 && (
+                <div className="px-4 py-4 text-xs text-white/30">該当するノートがありません。</div>
+              )}
+            </div>
+          ) : (
+            /* ノーマルツリー表示 */
+            <div className="flex flex-col gap-0.5 mt-2">
+              {rootNotes.map(note => (
+                <SidebarNode key={note.id} note={note} />
+              ))}
+              {rootNotes.length === 0 && (
+                <div className="px-6 py-4 text-xs text-white/30">テキストファイルがありません。</div>
+              )}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -617,7 +702,13 @@ export default function Home() {
                   🗑️
                  </span>
               </div>
-              <InfiniteBoard key={`board-${activeNote.id}`} content={activeNote.content} updateContent={handleUpdateContent} />
+              <InfiniteBoard 
+                key={`board-${activeNote.id}`} 
+                content={activeNote.content} 
+                updateContent={handleUpdateContent} 
+                notes={notes}
+                activateNote={activateNote}
+              />
            </div>
         ) : (
         <div className="max-w-4xl w-full mx-auto p-8 md:p-12 lg:px-16 block min-h-full pb-32">
@@ -692,6 +783,7 @@ export default function Home() {
                          if (yIds.length === 0) return null;
                          return (
                            <div className="mb-3 rounded-lg overflow-hidden border border-white/5 h-24 flex-shrink-0 relative">
+                             {/* eslint-disable-next-line @next/next/no-img-element */}
                              <img src={`https://img.youtube.com/vi/${yIds[0]}/mqdefault.jpg`} alt="YouTube preview" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                              <div className="absolute inset-0 flex items-center justify-center">
                                <div className="bg-red-600 text-white rounded-full w-8 h-6 flex items-center justify-center text-xs font-bold bg-opacity-90">▶</div>
@@ -744,7 +836,13 @@ export default function Home() {
               </div>
 
               <section className="block animate-fade-in relative min-h-[25vh] pb-16">
-                <BlockEditor key={`editor-${activeNote.id}`} content={activeNote.content} updateContent={handleUpdateContent} />
+                <BlockEditor
+                  key={`editor-${activeNote.id}`}
+                  content={activeNote.content}
+                  updateContent={handleUpdateContent}
+                  notes={notes}
+                  activateNote={activateNote}
+                />
               </section>
 
               {/* Scrapbox的・子カード領域 */}
@@ -769,6 +867,7 @@ export default function Home() {
                            if (yIds.length === 0) return null;
                            return (
                              <div className="mb-2 rounded-md overflow-hidden border border-white/5 h-20 flex-shrink-0 relative">
+                               {/* eslint-disable-next-line @next/next/no-img-element */}
                                <img src={`https://img.youtube.com/vi/${yIds[0]}/mqdefault.jpg`} alt="YouTube preview" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                                <div className="absolute inset-0 flex items-center justify-center">
                                  <div className="bg-red-600 text-white rounded-[10px] w-8 h-5 flex items-center justify-center text-[10px] bg-opacity-80">▶</div>
@@ -794,6 +893,37 @@ export default function Home() {
                     ))}
                   </div>
                 )}
+
+                {/* バックリンクセクション */}
+                {(() => {
+                  const backlinks = notes.filter(n =>
+                    n.id !== activeNote.id &&
+                    n.content.includes(`[[${activeNote.title}]]`)
+                  );
+                  if (backlinks.length === 0) return null;
+                  return (
+                    <>
+                      <div className="flex items-center gap-3 text-white/60 text-lg font-medium mt-8 pt-8 border-t border-white/10">
+                        <span>↩️</span> このページへのバックリンク ({backlinks.length})
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-5">
+                        {backlinks.map(note => (
+                          <div
+                            key={note.id}
+                            onClick={() => activateNote(note.id, note.title)}
+                            className="bg-[#0a0a0a] border border-white/10 rounded-xl p-4 hover:border-blue-500/40 hover:bg-blue-500/5 hover:-translate-y-0.5 transition-all cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="text-blue-400/60 text-sm">↩️</span>
+                              <h3 className="font-semibold text-white truncate text-sm">{note.title || '無題'}</h3>
+                            </div>
+                            <p className="text-white/40 text-xs line-clamp-2 leading-relaxed">{note.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
               </section>
             </>
           ) : (

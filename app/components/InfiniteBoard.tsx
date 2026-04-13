@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
+import { Note, extractYouTubeIds } from '../page';
 
 type Point = { x: number; y: number };
 type Stroke = {
@@ -11,20 +12,41 @@ type Stroke = {
 };
 type RectNode = {
   id: string;
-  type: 'image' | 'youtube';
+  type: 'image' | 'youtube' | 'page' | 'text';
   x: number;
   y: number;
   width: number;
   height: number;
   data: string;
+  color?: string;
+  fontSize?: number;
+};
+
+type Edge = {
+  id: string;
+  fromNodeId: string;
+  fromSide?: 'top' | 'bottom' | 'left' | 'right';
+  toNodeId: string;
+  toSide?: 'top' | 'bottom' | 'left' | 'right';
 };
 
 type BoardData = {
   strokes: Stroke[];
   nodes?: RectNode[];
+  edges?: Edge[];
 };
 
-export default function InfiniteBoard({ content, updateContent }: { content: string, updateContent: (c: string) => void }) {
+export default function InfiniteBoard({ 
+  content, 
+  updateContent,
+  notes,
+  activateNote
+}: { 
+  content: string, 
+  updateContent: (c: string) => void,
+  notes: Note[],
+  activateNote: (id: string | null, fallbackTitle?: string) => void
+}) {
   const [data, setData] = useState<BoardData>({ strokes: [], nodes: [] });
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -47,10 +69,15 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
   const [currentStroke, setCurrentStroke] = useState<Point[]>([]);
 
   // Toolbar state
-  const [tool, setTool] = useState<'select' | 'pan' | 'pen' | 'eraser'>('select');
+  const [tool, setTool] = useState<'select' | 'pan' | 'pen' | 'eraser' | 'text' | 'arrow'>('select');
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [currentWidth, setCurrentWidth] = useState(4);
   const [isStyleMenuOpen, setIsStyleMenuOpen] = useState(false);
+  const [currentTextColor, setCurrentTextColor] = useState('#ffffff');
+  const [currentTextSize, setCurrentTextSize] = useState(24);
+  const [editingTextNodeId, setEditingTextNodeId] = useState<string | null>(null);
+  const [draggingEdge, setDraggingEdge] = useState<{ fromNodeId: string; fromSide: 'top' | 'bottom' | 'left' | 'right'; toX: number; toY: number } | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   // Selection & Object manipulation
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -93,9 +120,22 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
   };
 
   const handleDelete = () => {
+    if (selectedEdgeId) {
+      saveToHistory(JSON.stringify(dataRef.current));
+      const newData = { ...dataRef.current, edges: (dataRef.current.edges || []).filter(e => e.id !== selectedEdgeId) };
+      setData(newData);
+      updateContent(JSON.stringify(newData));
+      setSelectedEdgeId(null);
+      return;
+    }
     if (selectedNodeId) {
       saveToHistory(JSON.stringify(dataRef.current));
-      const newData = { strokes: dataRef.current.strokes, nodes: (dataRef.current.nodes || []).filter(n => n.id !== selectedNodeId) };
+      // Also remove edges connected to this node
+      const newData = {
+        strokes: dataRef.current.strokes,
+        nodes: (dataRef.current.nodes || []).filter(n => n.id !== selectedNodeId),
+        edges: (dataRef.current.edges || []).filter(e => e.fromNodeId !== selectedNodeId && e.toNodeId !== selectedNodeId),
+      };
       setData(newData);
       updateContent(JSON.stringify(newData));
       setSelectedNodeId(null);
@@ -130,11 +170,32 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
     };
   };
 
+  // ── Dock-point helpers ────────────────────────────────────────────────────
+  // Returns the canvas coordinates of a node's dock point on a given side
+  const getDockPoint = (node: RectNode, side: 'top' | 'bottom' | 'left' | 'right') => {
+    const w = node.width  || 300;
+    const h = node.height || 100;
+    if (side === 'top')    return { x: node.x + w / 2, y: node.y };
+    if (side === 'bottom') return { x: node.x + w / 2, y: node.y + h };
+    if (side === 'left')   return { x: node.x,         y: node.y + h / 2 };
+    /* right */             return { x: node.x + w,    y: node.y + h / 2 };
+  };
+
+  // Returns which side of a node is nearest to canvas coords (px, py)
+  const getNearestSide = (node: RectNode, px: number, py: number): 'top' | 'bottom' | 'left' | 'right' => {
+    const w = node.width  || 300;
+    const h = node.height || 100;
+    const relX = px - (node.x + w / 2);
+    const relY = py - (node.y + h / 2);
+    if (Math.abs(relX) > Math.abs(relY)) return relX > 0 ? 'right' : 'left';
+    return relY > 0 ? 'bottom' : 'top';
+  };
+
   // Keyboard and Paste events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedNodeId || selectedEdgeId)) {
         handleDelete();
       }
       
@@ -150,6 +211,30 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
     
     const handlePaste = (e: ClipboardEvent) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
+      // Handle YouTube URL paste
+      const pastedText = e.clipboardData?.getData('text');
+      if (pastedText) {
+        const yIds = pastedText.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+        if (yIds && yIds[1]) {
+          const newNode: RectNode = {
+            id: crypto.randomUUID(), type: 'youtube', data: yIds[1],
+            x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 200, 
+            y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 150,
+            width: 400, height: 225 // initialized to 16:9
+          };
+          saveToHistory(JSON.stringify(dataRef.current));
+          const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
+          setData(newData);
+          updateContent(JSON.stringify(newData));
+          setTool('select');
+          setSelectedNodeId(newNode.id);
+          e.preventDefault();
+          return;
+        }
+      }
+
+      // Handle Image paste
       const items = e.clipboardData?.items;
       if (!items) return;
       for (let i = 0; i < items.length; i++) {
@@ -193,9 +278,11 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
     // Record history state on interaction start
     actionStartStateStr.current = JSON.stringify(dataRef.current);
 
-    if (tool === 'select' && e.button === 0) {
+    if ((tool === 'select' || tool === 'text' || tool === 'arrow') && e.button === 0) {
        setSelectedNodeId(null);
        setInteractiveNodeId(null);
+       setEditingTextNodeId(null);
+       setSelectedEdgeId(null);
     }
 
     if (e.button === 1 || tool === 'pan' || (e.button === 0 && e.altKey)) {
@@ -218,6 +305,17 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Arrow edge drag: update preview line endpoint
+    if (draggingEdge) {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      setDraggingEdge(prev => prev ? {
+        ...prev,
+        toX: (e.clientX - rect.left - camera.x) / camera.z,
+        toY: (e.clientY - rect.top - camera.y) / camera.z,
+      } : null);
+      return;
+    }
     if (activeNodeAction) {
        const dx = (e.clientX - activeNodeAction.startX) / camera.z;
        const dy = (e.clientY - activeNodeAction.startY) / camera.z;
@@ -278,6 +376,35 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Arrow edge drop: check if landing on a node
+    if (draggingEdge) {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const dropX = (e.clientX - rect.left - camera.x) / camera.z;
+        const dropY = (e.clientY - rect.top - camera.y) / camera.z;
+        const hitNode = (dataRef.current.nodes || []).find(n =>
+          n.id !== draggingEdge.fromNodeId &&
+          dropX >= n.x && dropX <= n.x + (n.width  || 300) &&
+          dropY >= n.y && dropY <= n.y + (n.height || 100)
+        );
+        if (hitNode) {
+          const toSide = getNearestSide(hitNode, dropX, dropY);
+          const newEdge: Edge = {
+            id: crypto.randomUUID(),
+            fromNodeId: draggingEdge.fromNodeId,
+            fromSide: draggingEdge.fromSide,
+            toNodeId: hitNode.id,
+            toSide,
+          };
+          saveToHistory(JSON.stringify(dataRef.current));
+          const newData = { ...dataRef.current, edges: [...(dataRef.current.edges || []), newEdge] };
+          setData(newData);
+          updateContent(JSON.stringify(newData));
+        }
+      }
+      setDraggingEdge(null);
+      return;
+    }
     if (activeNodeAction) {
        setActiveNodeAction(null);
        updateContent(JSON.stringify(dataRef.current));
@@ -331,28 +458,6 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
     const newY = mouseY - (mouseY - camera.y) * (newZ / camera.z);
 
     setCamera({ x: newX, y: newY, z: newZ });
-  };
-
-  const handleAddYouTube = () => {
-    const url = prompt("YouTube動画のURLを入力してください:");
-    if (!url) return;
-    const yIds = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
-    if (yIds && yIds[1]) {
-      const newNode: RectNode = {
-        id: crypto.randomUUID(), type: 'youtube', data: yIds[1],
-        x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 200, 
-        y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 150,
-        width: 400, height: 225 // initialized to 16:9
-      };
-      saveToHistory(JSON.stringify(dataRef.current));
-      const newData = { ...dataRef.current, nodes: [...(dataRef.current.nodes || []), newNode] };
-      setData(newData);
-      updateContent(JSON.stringify(newData));
-      setTool('select');
-      setSelectedNodeId(newNode.id);
-    } else {
-      alert("有効なYouTube URLを入力してください");
-    }
   };
 
   // Convert points to SVG SVGPathElement data string
@@ -417,11 +522,34 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
           <div className="w-[1px] h-8 bg-white/20 mx-1"></div>
 
           <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all text-white/60 hover:bg-white/10 hover:text-white`}
-            onClick={handleAddYouTube}
-            title="YouTube動画を追加"
+            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'text' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
+            onClick={() => {
+              setTool('text');
+              const newNode: RectNode = {
+                id: crypto.randomUUID(), type: 'text', data: '',
+                x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 150, 
+                y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 50,
+                width: 300, height: 100,
+                color: currentTextColor, fontSize: currentTextSize
+              };
+              saveToHistory(JSON.stringify(dataRef.current));
+              const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
+              setData(newData);
+              updateContent(JSON.stringify(newData));
+              setSelectedNodeId(newNode.id);
+              setEditingTextNodeId(newNode.id);
+            }}
+            title="テキスト"
           >
-            <span className="text-xl">🎥</span>
+            <span className="text-xl">📝</span>
+          </button>
+
+          <button 
+            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'arrow' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
+            onClick={() => setTool('arrow')}
+            title="ノードを矢印で接続 (Arrow)"
+          >
+            <span className="text-lg font-bold">→</span>
           </button>
         </div>
 
@@ -444,7 +572,7 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
 
           <button 
             className="flex items-center justify-center w-10 h-10 rounded-xl transition-all text-red-500/50 hover:bg-red-500/20 hover:text-red-400 disabled:opacity-20 disabled:hover:bg-transparent"
-            onClick={handleDelete} disabled={!selectedNodeId} title="選択消去 (Delete)"
+            onClick={handleDelete} disabled={!selectedNodeId && !selectedEdgeId} title="選択消去 (Delete)"
           >
             <span className="text-lg">🗑️</span>
           </button>
@@ -519,6 +647,81 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
         </div>
       )}
 
+      {/* Top Right Text Settings Dropdown */}
+      {tool === 'text' && (
+        <div className="absolute top-20 right-6 z-50 flex flex-col bg-black/80 backdrop-blur-2xl shadow-2xl rounded-2xl border border-white/10 overflow-hidden w-[240px] transition-all duration-300">
+           {/* Header / Toggle Button */}
+           <button 
+             onClick={() => setIsStyleMenuOpen(!isStyleMenuOpen)}
+             className="w-full px-4 py-3 text-sm text-white/80 hover:text-white flex items-center justify-between transition-colors hover:bg-white/5 active:bg-white/10"
+           >
+             <span className="font-medium flex items-center gap-2 text-white"><span>📝</span> テキスト設定</span>
+             <span className="text-[10px] text-white/50">{isStyleMenuOpen ? '▲' : '▼'}</span>
+           </button>
+
+           {/* Expandable Content Area */}
+           <div className={`w-full flex flex-col transition-all duration-300 ease-in-out ${isStyleMenuOpen ? 'max-h-[400px] opacity-100' : 'max-h-0 opacity-0'}`}>
+             <div className="p-4 pt-1 flex flex-col gap-4">
+                {/* Colors */}
+                <div>
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-white/40 mb-3">Color</div>
+                  <div className="flex gap-2 justify-between">
+                    {COLORS.map(c => (
+                      <button 
+                         key={c.id} 
+                         onClick={() => {
+                           setCurrentTextColor(c.hex);
+                           if (selectedNodeId) {
+                             const newNodes = dataRef.current.nodes?.map(n =>
+                               n.id === selectedNodeId && n.type === 'text' ? { ...n, color: c.hex } : n
+                             );
+                             const newData = { ...dataRef.current, nodes: newNodes };
+                             setData(newData);
+                             updateContent(JSON.stringify(newData));
+                           }
+                         }}
+                         title={c.id}
+                         className={`w-7 h-7 rounded-full shadow-inner transition-transform ${currentTextColor === c.hex ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black' : 'hover:scale-110'}`}
+                         style={{ backgroundColor: c.hex }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Separator */}
+                <div className="w-full h-px bg-white/10"></div>
+
+                {/* Size Slider */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-white/40">Size</div>
+                    <div className="text-[10px] font-mono text-white/60">{currentTextSize}px</div>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="12" 
+                    max="120" 
+                    value={currentTextSize}
+                    onChange={(e) => {
+                      const newSize = parseInt(e.target.value);
+                      setCurrentTextSize(newSize);
+                      if (selectedNodeId) {
+                        const newNodes = dataRef.current.nodes?.map(n =>
+                          n.id === selectedNodeId && n.type === 'text' ? { ...n, fontSize: newSize } : n
+                        );
+                        const newData = { ...dataRef.current, nodes: newNodes };
+                        setData(newData);
+                        updateContent(JSON.stringify(newData));
+                      }
+                    }}
+                    className="w-full accent-blue-500 cursor-pointer mb-2"
+                  />
+                </div>
+             </div>
+           </div>
+        </div>
+      )}
+
       {/* Viewport for Infinite Canvas */}
       <div 
         ref={containerRef}
@@ -527,8 +730,31 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onWheel={handleWheel}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const noteId = e.dataTransfer.getData("application/nemo-note-id");
+          if (noteId) {
+             const rect = containerRef.current?.getBoundingClientRect();
+             if (!rect) return;
+             const dropX = (e.clientX - rect.left - camera.x) / camera.z;
+             const dropY = (e.clientY - rect.top - camera.y) / camera.z;
+             
+             const newNode: RectNode = {
+               id: crypto.randomUUID(), type: 'page', data: noteId,
+               x: dropX - 125, y: dropY - 90, width: 250, height: 180
+             };
+             saveToHistory(JSON.stringify(dataRef.current));
+             const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
+             setData(newData);
+             updateContent(JSON.stringify(newData));
+             setTool('select');
+             setSelectedNodeId(newNode.id);
+          }
+        }}
         style={{
-          cursor: tool === 'pan' || isPanning ? 'grab' : tool === 'eraser' ? 'cell' : tool === 'select' ? 'default' : 'crosshair'
+          cursor: tool === 'pan' || isPanning ? 'grab' : tool === 'eraser' ? 'cell' : tool === 'text' ? 'text' : tool === 'arrow' ? 'crosshair' : tool === 'select' ? 'default' : 'crosshair'
         }}
       >
         <svg 
@@ -558,14 +784,26 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
           {(data.nodes || []).map(node => (
              <div 
                key={node.id}
-               className={`absolute group box-border ${selectedNodeId === node.id ? 'ring-2 ring-blue-500 shadow-xl z-20' : 'shadow-md z-10'}`}
+               className={`absolute group box-border ${
+                 selectedNodeId === node.id
+                   ? node.type === 'text' ? 'outline outline-2 outline-blue-500 z-20' : 'ring-2 ring-blue-500 shadow-xl z-20'
+                   : 'shadow-md z-10'
+               }`}
                style={{
-                 left: node.x, top: node.y, width: node.width, height: node.height,
-                 cursor: tool === 'select' ? 'move' : 'default',
-                 pointerEvents: tool === 'select' ? 'auto' : 'none',
+                 left: node.x, top: node.y,
+                 width: node.type === 'text' ? 'max-content' : node.width,
+                 height: node.type === 'text' ? 'auto' : node.height,
+                 maxWidth: node.type === 'text' ? '600px' : undefined,
+                 cursor: tool === 'arrow' ? 'crosshair' : (tool === 'select' || (tool === 'text' && node.type === 'text')) ? 'move' : 'default',
+                 pointerEvents: (tool === 'select' || tool === 'arrow' || (tool === 'text' && node.type === 'text')) ? 'auto' : 'none',
                }}
                onPointerDown={(e) => {
                  actionStartStateStr.current = JSON.stringify(dataRef.current);
+                 // Arrow tool: edges start only from dock points — block body click
+                 if (tool === 'arrow') {
+                   e.stopPropagation();
+                   return;
+                 }
                  if (tool !== 'select') return;
                  e.stopPropagation();
                  setSelectedNodeId(node.id);
@@ -577,6 +815,27 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
                  });
                }}
              >
+               {/* Arrow tool: 4 dock-point circles at the node edges */}
+               {tool === 'arrow' && (['top', 'bottom', 'left', 'right'] as const).map(side => {
+                 const pos: React.CSSProperties =
+                   side === 'top'    ? { top: -6,    left: '50%', transform: 'translateX(-50%)' } :
+                   side === 'bottom' ? { bottom: -6, left: '50%', transform: 'translateX(-50%)' } :
+                   side === 'left'   ? { left: -6,   top: '50%',  transform: 'translateY(-50%)' } :
+                                       { right: -6,  top: '50%',  transform: 'translateY(-50%)' };
+                 return (
+                   <div
+                     key={side}
+                     className="absolute w-3 h-3 rounded-full bg-white border-2 border-blue-400 z-40 hover:scale-150 hover:bg-blue-400 transition-transform"
+                     style={{ ...pos, pointerEvents: 'auto', cursor: 'crosshair' }}
+                     onPointerDown={(e) => {
+                       e.stopPropagation();
+                       (e.target as HTMLElement).setPointerCapture(e.pointerId);
+                       const dp = getDockPoint(node, side);
+                       setDraggingEdge({ fromNodeId: node.id, fromSide: side, toX: dp.x, toY: dp.y });
+                     }}
+                   />
+                 );
+               })}
                {node.type === 'image' && (
                  <img src={node.data} alt="Canvas Node" className="w-full h-full object-contain rounded-sm pointer-events-none" draggable={false} />
                )}
@@ -602,8 +861,119 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
                  </div>
                )}
 
-               {/* Resize Handle */}
-               {selectedNodeId === node.id && tool === 'select' && (
+               {node.type === 'page' && (() => {
+                 const targetNote = notes.find(n => n.id === node.data);
+                 if (!targetNote) return <div className="w-full h-full bg-red-900/50 flex items-center justify-center text-white/50 text-xs text-center p-2 rounded-sm">ノートが見つかりません</div>;
+                 
+                 const yIds = extractYouTubeIds(targetNote.content);
+                 const hasYoutube = yIds.length > 0;
+                 
+                 return (
+                   <div 
+                     className="w-full h-full bg-[#0a0a0a] border border-white/20 rounded-xl p-4 flex flex-col shadow-2xl overflow-hidden hover:border-white/40 transition-colors pointer-events-auto"
+                     onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        activateNote(targetNote.id, targetNote.title);
+                     }}
+                     title="ダブルクリックでページを開く"
+                   >
+                     <h3 className="font-semibold text-white mb-2 truncate flex-shrink-0" style={{ fontSize: Math.max(12, Math.min(node.width * 0.08, 24)) }}>
+                       {targetNote.title || "無題"}
+                     </h3>
+                     {hasYoutube && (
+                       <div className="mb-2 rounded-md overflow-hidden border border-white/5 flex-shrink-0 relative" style={{ height: Math.min(node.height * 0.4, 150) }}>
+                         {/* eslint-disable-next-line @next/next/no-img-element */}
+                         <img src={`https://img.youtube.com/vi/${yIds[0]}/mqdefault.jpg`} alt="YouTube preview" className="w-full h-full object-cover opacity-80" draggable={false} />
+                         <div className="absolute inset-0 flex items-center justify-center text-[10px]">
+                           <div className="bg-red-600 text-white rounded w-8 h-5 flex items-center justify-center bg-opacity-80">▶</div>
+                         </div>
+                       </div>
+                     )}
+                     <p className="text-white/50 text-xs flex-1 overflow-hidden whitespace-pre-wrap leading-relaxed" 
+                        style={{ fontSize: Math.max(10, Math.min(node.width * 0.05, 14)), maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)' }}>
+                       {targetNote.content}
+                     </p>
+                   </div>
+                 );
+               })()}
+
+               {node.type === 'text' && (
+                  <div 
+                    className="relative"
+                    onDoubleClick={(e) => {
+                       e.stopPropagation();
+                       setEditingTextNodeId(node.id);
+                       setTool('text');
+                    }}
+                    onPointerDown={(e) => {
+                       if (tool === 'text' && node.type === 'text') {
+                         actionStartStateStr.current = JSON.stringify(dataRef.current);
+                         e.stopPropagation();
+                         setSelectedNodeId(node.id);
+                         setActiveNodeAction({
+                           id: node.id, action: 'drag',
+                           startX: e.clientX, startY: e.clientY,
+                           startNodeX: node.x, startNodeY: node.y,
+                           startNodeW: node.width, startNodeH: node.height
+                         });
+                       }
+                    }}
+                  >
+                    {editingTextNodeId === node.id ? (
+                      <textarea
+                        autoFocus
+                        className="block bg-transparent border-none outline-none resize-none leading-relaxed overflow-hidden"
+                        style={{
+                          color: node.color || '#ffffff',
+                          fontSize: `${node.fontSize || 24}px`,
+                          width: '100%',
+                          minWidth: '80px',
+                          height: 'auto',
+                          caretColor: node.color || '#ffffff',
+                        }}
+                        rows={1}
+                        value={node.data}
+                        onChange={(e) => {
+                          const el = e.target;
+                          el.style.height = 'auto';
+                          el.style.height = el.scrollHeight + 'px';
+                          const val = el.value;
+                          const newNodes = dataRef.current.nodes?.map(n =>
+                            n.id === node.id ? { ...n, data: val } : n
+                          );
+                          const newData = { ...dataRef.current, nodes: newNodes };
+                          setData(newData);
+                        }}
+                        onBlur={() => {
+                          updateContent(JSON.stringify(dataRef.current));
+                          setEditingTextNodeId(null);
+                        }}
+                        onPointerDown={e => e.stopPropagation()}
+                        ref={(el) => {
+                          if (el) {
+                            el.style.height = 'auto';
+                            el.style.height = el.scrollHeight + 'px';
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div 
+                        className="whitespace-pre-wrap break-words leading-relaxed cursor-text select-none"
+                        style={{
+                          color: node.color || '#ffffff',
+                          fontSize: `${node.fontSize || 24}px`,
+                          minWidth: '80px',
+                          minHeight: `${(node.fontSize || 24) * 1.5}px`,
+                        }}
+                      >
+                        {node.data || <span className="opacity-20">Aa</span>}
+                      </div>
+                    )}
+                  </div>
+               )}
+
+               {/* Resize Handle - text nodes auto-size so no handle needed */}
+               {selectedNodeId === node.id && node.type !== 'text' && tool === 'select' && (
                  <div 
                    className="absolute -bottom-3 -right-3 w-6 h-6 rounded-full cursor-nwse-resize z-30 shadow-lg flex items-center justify-center pointer-events-auto hover:scale-125 transition-transform"
                    onPointerDown={(e) => {
@@ -649,6 +1019,74 @@ export default function InfiniteBoard({ content, updateContent }: { content: str
                 strokeLinejoin="round" 
               />
             )}
+          </svg>
+
+          {/* ----- Edges (Arrows between nodes) ----- */}
+          <svg className="overflow-visible absolute inset-0 w-full h-full" style={{ zIndex: 25 }}>
+            <defs>
+              <marker id="arrowNorm" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                <polygon points="0 0, 9 3.5, 0 7" fill="rgba(148,163,184,0.65)" />
+              </marker>
+              <marker id="arrowSel" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                <polygon points="0 0, 9 3.5, 0 7" fill="rgb(59,130,246)" />
+              </marker>
+              <marker id="arrowPrev" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                <polygon points="0 0, 9 3.5, 0 7" fill="rgba(59,130,246,0.7)" />
+              </marker>
+            </defs>
+
+            {/* Completed edges */}
+            {(data.edges || []).map(edge => {
+              const fromNode = (data.nodes || []).find(n => n.id === edge.fromNodeId);
+              const toNode   = (data.nodes || []).find(n => n.id === edge.toNodeId);
+              if (!fromNode || !toNode) return null;
+              const fromPt = getDockPoint(fromNode, edge.fromSide || 'right');
+              const toPt   = getDockPoint(toNode,   edge.toSide   || 'left');
+              const fx = fromPt.x, fy = fromPt.y;
+              const tx = toPt.x,   ty = toPt.y;
+              const isSel = selectedEdgeId === edge.id;
+              return (
+                <g key={edge.id}>
+                  {/* Wide transparent hit area */}
+                  <line x1={fx} y1={fy} x2={tx} y2={ty}
+                    stroke="transparent" strokeWidth={18}
+                    style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+                    onClick={(e) => { e.stopPropagation(); setSelectedEdgeId(isSel ? null : edge.id); setSelectedNodeId(null); }}
+                  />
+                  {/* Visible arrow */}
+                  <line x1={fx} y1={fy} x2={tx} y2={ty}
+                    stroke={isSel ? 'rgba(59,130,246,0.95)' : 'rgba(148,163,184,0.5)'}
+                    strokeWidth={isSel ? 2.5 : 1.5}
+                    markerEnd={isSel ? 'url(#arrowSel)' : 'url(#arrowNorm)'}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                  {/* Selection label for delete hint */}
+                  {isSel && (
+                    <text
+                      x={(fx + tx) / 2} y={(fy + ty) / 2 - 8}
+                      fill="rgba(59,130,246,0.8)" fontSize="10" textAnchor="middle"
+                      style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    >
+                      Delete で削除
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Dragging edge preview */}
+            {draggingEdge && (() => {
+              const fromNode = (data.nodes || []).find(n => n.id === draggingEdge.fromNodeId);
+              if (!fromNode) return null;
+              const fromPt = getDockPoint(fromNode, draggingEdge.fromSide);
+              return (
+                <line x1={fromPt.x} y1={fromPt.y} x2={draggingEdge.toX} y2={draggingEdge.toY}
+                  stroke="rgba(59,130,246,0.7)" strokeWidth={1.5}
+                  strokeDasharray="7,4" markerEnd="url(#arrowPrev)"
+                  style={{ pointerEvents: 'none' }}
+                />
+              );
+            })()}
           </svg>
 
         </div>
