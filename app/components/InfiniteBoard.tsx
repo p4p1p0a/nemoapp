@@ -78,6 +78,7 @@ export default function InfiniteBoard({
   const [editingTextNodeId, setEditingTextNodeId] = useState<string | null>(null);
   const [draggingEdge, setDraggingEdge] = useState<{ fromNodeId: string; fromSide: 'top' | 'bottom' | 'left' | 'right'; toX: number; toY: number } | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
 
   // Selection & Object manipulation
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -120,6 +121,14 @@ export default function InfiniteBoard({
   };
 
   const handleDelete = () => {
+    if (selectedStrokeId) {
+      saveToHistory(JSON.stringify(dataRef.current));
+      const newData = { ...dataRef.current, strokes: dataRef.current.strokes.filter(s => s.id !== selectedStrokeId) };
+      setData(newData);
+      updateContent(JSON.stringify(newData));
+      setSelectedStrokeId(null);
+      return;
+    }
     if (selectedEdgeId) {
       saveToHistory(JSON.stringify(dataRef.current));
       const newData = { ...dataRef.current, edges: (dataRef.current.edges || []).filter(e => e.id !== selectedEdgeId) };
@@ -130,7 +139,6 @@ export default function InfiniteBoard({
     }
     if (selectedNodeId) {
       saveToHistory(JSON.stringify(dataRef.current));
-      // Also remove edges connected to this node
       const newData = {
         strokes: dataRef.current.strokes,
         nodes: (dataRef.current.nodes || []).filter(n => n.id !== selectedNodeId),
@@ -190,12 +198,27 @@ export default function InfiniteBoard({
     if (Math.abs(relX) > Math.abs(relY)) return relX > 0 ? 'right' : 'left';
     return relY > 0 ? 'bottom' : 'top';
   };
+  // ── Stroke hit-test helper ────────────────────────────────────────────────────
+  const isNearStroke = (stroke: Stroke, px: number, py: number, threshold: number): boolean => {
+    const pts = stroke.points;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const ax = pts[i].x,   ay = pts[i].y;
+      const bx = pts[i+1].x, by = pts[i+1].y;
+      const dx = bx - ax,    dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+      const cx = ax + t * dx, cy = ay + t * dy;
+      if (Math.hypot(px - cx, py - cy) < threshold) return true;
+    }
+    // Single-point stroke fallback
+    if (pts.length === 1) return Math.hypot(px - pts[0].x, py - pts[0].y) < threshold;
+    return false;
+  };
 
-  // Keyboard and Paste events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedNodeId || selectedEdgeId)) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedNodeId || selectedEdgeId || selectedStrokeId)) {
         handleDelete();
       }
       
@@ -212,16 +235,48 @@ export default function InfiniteBoard({
     const handlePaste = (e: ClipboardEvent) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
-      // Handle YouTube URL paste
+      const items = e.clipboardData?.items;
+
+      // ── 1) Image paste takes priority (handles files, screenshots, browser copy) ──
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith('image/')) {
+            const blob = items[i].getAsFile();
+            if (blob) {
+              const reader = new FileReader();
+              reader.onload = (event) => {
+                 const dataUrl = event.target?.result as string;
+                 const newNode: RectNode = {
+                   id: crypto.randomUUID(), type: 'image', data: dataUrl,
+                   x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 150,
+                   y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 150,
+                   width: 300, height: 300
+                 };
+                 saveToHistory(JSON.stringify(dataRef.current));
+                 const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
+                 setData(newData);
+                 updateContent(JSON.stringify(newData));
+                 setTool('select');
+                 setSelectedNodeId(newNode.id);
+              };
+              reader.readAsDataURL(blob);
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
+
+      // ── 2) YouTube URL paste ──
       const pastedText = e.clipboardData?.getData('text');
       if (pastedText) {
         const yIds = pastedText.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
         if (yIds && yIds[1]) {
           const newNode: RectNode = {
             id: crypto.randomUUID(), type: 'youtube', data: yIds[1],
-            x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 200, 
+            x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 200,
             y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 150,
-            width: 400, height: 225 // initialized to 16:9
+            width: 400, height: 225
           };
           saveToHistory(JSON.stringify(dataRef.current));
           const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
@@ -233,36 +288,6 @@ export default function InfiniteBoard({
           return;
         }
       }
-
-      // Handle Image paste
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          const blob = items[i].getAsFile();
-          if (blob) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-               const dataUrl = event.target?.result as string;
-               const newNode: RectNode = {
-                 id: crypto.randomUUID(), type: 'image', data: dataUrl,
-                 x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 150, 
-                 y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 150,
-                 width: 300, height: 300
-               };
-               saveToHistory(JSON.stringify(dataRef.current));
-               const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
-               setData(newData);
-               updateContent(JSON.stringify(newData));
-               setTool('select');
-               setSelectedNodeId(newNode.id);
-            };
-            reader.readAsDataURL(blob);
-            e.preventDefault();
-            break;
-          }
-        }
-      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -272,7 +297,7 @@ export default function InfiniteBoard({
       window.removeEventListener('paste', handlePaste);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNodeId, camera, updateContent]); // ignoring undo functions in deps to avoid constant rebinding
+  }, [selectedNodeId, selectedEdgeId, selectedStrokeId, camera, updateContent]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Record history state on interaction start
@@ -283,6 +308,18 @@ export default function InfiniteBoard({
        setInteractiveNodeId(null);
        setEditingTextNodeId(null);
        setSelectedEdgeId(null);
+       setSelectedStrokeId(null);
+    }
+
+    // Stroke hit detection in select mode (fires only when clicking canvas background)
+    if (tool === 'select' && e.button === 0) {
+      const pt = getCanvasPoint(e);
+      const threshold = 8 / camera.z;
+      const hit = dataRef.current.strokes.find(s => isNearStroke(s, pt.x, pt.y, threshold));
+      if (hit) {
+        setSelectedStrokeId(hit.id);
+        return; // don't start pan/draw
+      }
     }
 
     if (e.button === 1 || tool === 'pan' || (e.button === 0 && e.altKey)) {
@@ -572,7 +609,7 @@ export default function InfiniteBoard({
 
           <button 
             className="flex items-center justify-center w-10 h-10 rounded-xl transition-all text-red-500/50 hover:bg-red-500/20 hover:text-red-400 disabled:opacity-20 disabled:hover:bg-transparent"
-            onClick={handleDelete} disabled={!selectedNodeId && !selectedEdgeId} title="選択消去 (Delete)"
+            onClick={handleDelete} disabled={!selectedNodeId && !selectedEdgeId && !selectedStrokeId} title="選択消去 (Delete)"
           >
             <span className="text-lg">🗑️</span>
           </button>
@@ -996,17 +1033,53 @@ export default function InfiniteBoard({
           {/* ----- SVG Strokes ----- */}
           <svg className="overflow-visible absolute inset-0 w-full h-full">
             {/* Draw existing strokes */}
-            {data.strokes.map(s => (
-              <path 
-                key={s.id} 
-                d={renderStroke(s.points)} 
-                stroke={s.color} 
-                strokeWidth={s.width} 
-                fill="none" 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-              />
-            ))}
+            {data.strokes.map(s => {
+              const isSelected = selectedStrokeId === s.id;
+              const d = renderStroke(s.points);
+              return (
+                <g key={s.id}>
+                  {/* Wide invisible hit area for click selection */}
+                  <path
+                    d={d}
+                    stroke="transparent"
+                    strokeWidth={Math.max(s.width + 12, 16)}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ pointerEvents: 'stroke', cursor: tool === 'select' ? 'pointer' : 'default' }}
+                    onClick={(e) => {
+                      if (tool !== 'select') return;
+                      e.stopPropagation();
+                      setSelectedStrokeId(isSelected ? null : s.id);
+                      setSelectedNodeId(null);
+                      setSelectedEdgeId(null);
+                    }}
+                  />
+                  {/* Glow / selection highlight */}
+                  {isSelected && (
+                    <path
+                      d={d}
+                      stroke="rgba(59,130,246,0.5)"
+                      strokeWidth={s.width + 8}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  )}
+                  {/* Actual stroke */}
+                  <path
+                    d={d}
+                    stroke={s.color}
+                    strokeWidth={s.width}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                </g>
+              );
+            })}
             
             {/* Current drawing stroke live preview */}
             {currentStroke.length > 0 && (

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import InfiniteBoard from "./components/InfiniteBoard";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
+import Calendar from "./components/Calendar";
 
 export type Note = {
   id: string;
@@ -214,6 +215,7 @@ export default function Home() {
   const [dailyContent, setDailyContent] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activePanel, setActivePanel] = useState<'files' | 'calendar' | null>('files');
   
   // タブ管理システム
   const [openedTabs, setOpenedTabs] = useState<Tab[]>([{ id: null, title: "WORKSPACE" }]);
@@ -539,10 +541,31 @@ export default function Home() {
 
   return (
     <div className={`flex h-screen bg-black text-white font-sans overflow-hidden ${isResizing ? 'select-none cursor-col-resize' : ''}`}>
-      
-      {/* -------------------------------
-          純粋化された左サイドバー
-      ------------------------------- */}
+
+      {/* ===============================
+          アクティビティバー（左端固定の縦型アイコンレール）
+      =============================== */}
+      <nav className="w-12 flex-shrink-0 flex flex-col items-center py-4 gap-1 bg-[#070707] border-r border-white/[0.06] z-20">
+        {([
+          { id: 'files',    icon: '📁', label: 'ファイルツリー' },
+          { id: 'calendar', icon: '📅', label: 'カレンダー'     },
+        ] as const).map(({ id, icon, label }) => (
+          <button
+            key={id}
+            title={label}
+            onClick={() => setActivePanel(prev => prev === id ? null : id)}
+            className={`w-9 h-9 flex items-center justify-center rounded-lg text-lg transition-all duration-150
+              ${ activePanel === id
+                ? 'bg-white/15 text-white shadow-inner'
+                : 'text-white/35 hover:bg-white/10 hover:text-white/70'
+              }`}
+          >
+            {icon}
+          </button>
+        ))}
+      </nav>
+
+      {activePanel === 'files' && (
       <aside 
         className="bg-[#0a0a0a] border-r border-white/10 flex flex-col pt-6 pb-6 h-full flex-shrink-0 relative"
         style={{ width: `${sidebarWidth}px` }}
@@ -643,11 +666,19 @@ export default function Home() {
           )}
         </div>
       </aside>
+      )}
+
+      {/* ===============================
+          カレンダー（アクティビティバーから全画面卡占）
+      =============================== */}
+      {activePanel === 'calendar' && (
+        <Calendar />
+      )}
 
       {/* -------------------------------
-          メイン領域
+          メイン領域（カレンダー表示時は非表示）
       ------------------------------- */}
-      <main className={`flex-1 flex flex-col relative bg-[#000000] ${activeNote?.type === 'board' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <main className={`flex-1 flex flex-col relative bg-[#000000] ${activeNote?.type === 'board' ? 'overflow-hidden' : 'overflow-y-auto'} ${activePanel === 'calendar' ? 'hidden' : ''}`}>
         
         {/* ==================================
              タブシステム (Window-like UI)
@@ -894,7 +925,7 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* バックリンクセクション */}
+                {/* リンクされたノート（バックリンク） */}
                 {(() => {
                   const backlinks = notes.filter(n =>
                     n.id !== activeNote.id &&
@@ -904,7 +935,7 @@ export default function Home() {
                   return (
                     <>
                       <div className="flex items-center gap-3 text-white/60 text-lg font-medium mt-8 pt-8 border-t border-white/10">
-                        <span>↩️</span> このページへのバックリンク ({backlinks.length})
+                        <span>↩️</span> リンクされたノート ({backlinks.length})
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-5">
                         {backlinks.map(note => (
