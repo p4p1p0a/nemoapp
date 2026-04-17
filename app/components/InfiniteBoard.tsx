@@ -12,14 +12,16 @@ type Stroke = {
 };
 type RectNode = {
   id: string;
-  type: 'image' | 'youtube' | 'page' | 'text';
+  type: 'image' | 'youtube' | 'page' | 'text' | 'rect' | 'ellipse';
   x: number;
   y: number;
   width: number;
   height: number;
   data: string;
-  color?: string;
+  color?: string;       // 図形の枠線色 / テキストの色
   fontSize?: number;
+  fillColor?: string;   // 図形の塗りつぶし色（'transparent' or hex）
+  strokeWidth?: number; // 図形の枠線の太さ
 };
 
 type Edge = {
@@ -36,6 +38,40 @@ type BoardData = {
   edges?: Edge[];
 };
 
+// ── 定数 / 共通タイプ ─────────────────────────────────────────────────────────────────────
+const COLORS: { id: string; hex: string }[] = [
+  { id: 'white',  hex: '#ffffff' },
+  { id: 'red',    hex: '#ff4b4b' },
+  { id: 'green',  hex: '#4bff5a' },
+  { id: 'blue',   hex: '#4b83ff' },
+  { id: 'yellow', hex: '#ffeb3b' },
+];
+
+type ToolType = 'select' | 'pan' | 'pen' | 'eraser' | 'text' | 'arrow' | 'rect' | 'ellipse';
+
+// ツールバーボタン共通コンポーネント
+const ToolBtn = ({
+  isActive, title, onClick, children,
+}: {
+  isActive: boolean;
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) => (
+  <button
+    className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${
+      isActive
+        ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]'
+        : 'text-white/60 hover:bg-white/10 hover:text-white'
+    }`}
+    onClick={onClick}
+    title={title}
+  >
+    {children}
+  </button>
+);
+
+// ─────────────────────────────────────────────────────────────────────
 export default function InfiniteBoard({ 
   content, 
   updateContent,
@@ -69,7 +105,7 @@ export default function InfiniteBoard({
   const [currentStroke, setCurrentStroke] = useState<Point[]>([]);
 
   // Toolbar state
-  const [tool, setTool] = useState<'select' | 'pan' | 'pen' | 'eraser' | 'text' | 'arrow'>('select');
+  const [tool, setTool] = useState<ToolType>('select');
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [currentWidth, setCurrentWidth] = useState(4);
   const [isStyleMenuOpen, setIsStyleMenuOpen] = useState(false);
@@ -79,6 +115,12 @@ export default function InfiniteBoard({
   const [draggingEdge, setDraggingEdge] = useState<{ fromNodeId: string; fromSide: 'top' | 'bottom' | 'left' | 'right'; toX: number; toY: number } | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
+
+  // 図形描画 state
+  const [shapeStartPt, setShapeStartPt] = useState<Point | null>(null);
+  const [shapeCurPt,   setShapeCurPt]   = useState<Point | null>(null);
+  const [currentFillColor,        setCurrentFillColor]        = useState<string>('transparent');
+  const [currentShapeStrokeWidth, setCurrentShapeStrokeWidth] = useState<number>(2);
 
   // Selection & Object manipulation
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -159,15 +201,27 @@ export default function InfiniteBoard({
     actionStartStateStr.current = null;
   };
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  // 選択中ノードのプロパティを直接更新するヘルパー
+  const patchNode = (updates: Partial<RectNode>) => {
+    const newNodes = (dataRef.current.nodes || []).map(n =>
+      n.id === selectedNodeId ? { ...n, ...updates } : n
+    );
+    const newData = { ...dataRef.current, nodes: newNodes };
+    setData(newData);
+    updateContent(JSON.stringify(newData));
+  };
 
-  const COLORS = [
-    { id: 'white', hex: '#ffffff' },
-    { id: 'red', hex: '#ff4b4b' },
-    { id: 'green', hex: '#4bff5a' },
-    { id: 'blue', hex: '#4b83ff' },
-    { id: 'yellow', hex: '#ffeb3b' },
-  ];
+  // 選択中ストロークのプロパティを直接更新するヘルパー
+  const patchStroke = (updates: Partial<Stroke>) => {
+    const newStrokes = dataRef.current.strokes.map(s =>
+      s.id === selectedStrokeId ? { ...s, ...updates } : s
+    );
+    const newData = { ...dataRef.current, strokes: newStrokes };
+    setData(newData);
+    updateContent(JSON.stringify(newData));
+  };
+
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const getCanvasPoint = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!containerRef.current) return { x: 0, y: 0 };
@@ -339,6 +393,16 @@ export default function InfiniteBoard({
       setIsDrawing(true);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     }
+
+    if (e.button === 0 && (tool === 'rect' || tool === 'ellipse')) {
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setSelectedStrokeId(null);
+      const pt = getCanvasPoint(e);
+      setShapeStartPt(pt);
+      setShapeCurPt(pt);
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -387,6 +451,11 @@ export default function InfiniteBoard({
         x: c.x + e.movementX,
         y: c.y + e.movementY
       }));
+      return;
+    }
+
+    if (shapeStartPt && (tool === 'rect' || tool === 'ellipse')) {
+      setShapeCurPt(getCanvasPoint(e));
       return;
     }
 
@@ -480,6 +549,33 @@ export default function InfiniteBoard({
        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
        commitHistoryOnPointerUp();
     }
+
+    if (shapeStartPt && (tool === 'rect' || tool === 'ellipse')) {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      const x = Math.min(shapeStartPt.x, shapeCurPt!.x);
+      const y = Math.min(shapeStartPt.y, shapeCurPt!.y);
+      const w = Math.abs(shapeCurPt!.x - shapeStartPt.x);
+      const h = Math.abs(shapeCurPt!.y - shapeStartPt.y);
+      if (w > 5 && h > 5) {
+        const newNode: RectNode = {
+          id: crypto.randomUUID(),
+          type: tool as 'rect' | 'ellipse',
+          data: '',
+          x, y, width: w, height: h,
+          color:       currentColor,
+          fillColor:   currentFillColor,
+          strokeWidth: currentShapeStrokeWidth,
+        };
+        saveToHistory(JSON.stringify(dataRef.current));
+        const newData = { ...dataRef.current, nodes: [...(dataRef.current.nodes || []), newNode] };
+        setData(newData);
+        updateContent(JSON.stringify(newData));
+        setSelectedNodeId(newNode.id);
+      }
+      setShapeStartPt(null);
+      setShapeCurPt(null);
+      commitHistoryOnPointerUp();
+    }
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -525,49 +621,23 @@ export default function InfiniteBoard({
           
         {/* Primary Toolbar */}
         <div className="flex items-center p-2 bg-black/80 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl gap-2">
-          <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'select' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
-            onClick={() => setTool('select')}
-            title="選択・移動 (Select)"
-          >
-            <span className="text-xl">👆</span>
-          </button>
-          <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'pan' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
-            onClick={() => setTool('pan')}
-            title="パン操作 (Hand)"
-          >
-            <span className="text-xl">🖐</span>
-          </button>
+          <ToolBtn isActive={tool === 'select'} onClick={() => setTool('select')} title="選択・移動 (Select)"><span className="text-xl">👆</span></ToolBtn>
+          <ToolBtn isActive={tool === 'pan'}    onClick={() => setTool('pan')}    title="パン操作 (Hand)"><span className="text-xl">🖐</span></ToolBtn>
+          <ToolBtn isActive={tool === 'pen'}    onClick={() => setTool('pen')}    title="描画ツール"><span className="text-xl">✏️</span></ToolBtn>
+          <ToolBtn isActive={tool === 'eraser'} onClick={() => setTool('eraser')} title="消しゴム"><span className="text-xl">🧹</span></ToolBtn>
 
-          <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'pen' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
-            onClick={() => setTool('pen')}
-            title="描画ツール"
-          >
-            <span className="text-xl">✏️</span>
-          </button>
+          <div className="w-[1px] h-8 bg-white/20 mx-1" />
 
-          <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'eraser' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
-            onClick={() => setTool('eraser')}
-            title="消しゴム"
-          >
-            <span className="text-xl">🧹</span>
-          </button>
-
-          <div className="w-[1px] h-8 bg-white/20 mx-1"></div>
-
-          <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'text' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
+          {/* テキストツールはクリック時にノードも同時作成 */}
+          <ToolBtn isActive={tool === 'text'} title="テキスト"
             onClick={() => {
               setTool('text');
               const newNode: RectNode = {
                 id: crypto.randomUUID(), type: 'text', data: '',
-                x: -camera.x / camera.z + window.innerWidth / 2 / camera.z - 150, 
+                x: -camera.x / camera.z + window.innerWidth  / 2 / camera.z - 150,
                 y: -camera.y / camera.z + window.innerHeight / 2 / camera.z - 50,
                 width: 300, height: 100,
-                color: currentTextColor, fontSize: currentTextSize
+                color: currentTextColor, fontSize: currentTextSize,
               };
               saveToHistory(JSON.stringify(dataRef.current));
               const newData = { strokes: dataRef.current.strokes, nodes: [...(dataRef.current.nodes || []), newNode] };
@@ -576,18 +646,14 @@ export default function InfiniteBoard({
               setSelectedNodeId(newNode.id);
               setEditingTextNodeId(newNode.id);
             }}
-            title="テキスト"
-          >
-            <span className="text-xl">📝</span>
-          </button>
+          ><span className="text-xl">📝</span></ToolBtn>
 
-          <button 
-            className={`flex items-center justify-center w-12 h-12 rounded-xl transition-all ${tool === 'arrow' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
-            onClick={() => setTool('arrow')}
-            title="ノードを矢印で接続 (Arrow)"
-          >
-            <span className="text-lg font-bold">→</span>
-          </button>
+          <ToolBtn isActive={tool === 'arrow'} onClick={() => setTool('arrow')} title="ノードを矢印で接続 (Arrow)"><span className="text-lg font-bold">→</span></ToolBtn>
+
+          <div className="w-[1px] h-8 bg-white/20 mx-1" />
+
+          <ToolBtn isActive={tool === 'rect'}    onClick={() => setTool('rect')}    title="長方形 (Rect)"><span className="text-xl leading-none">□</span></ToolBtn>
+          <ToolBtn isActive={tool === 'ellipse'} onClick={() => setTool('ellipse')} title="楕円 (Ellipse)"><span className="text-xl leading-none">○</span></ToolBtn>
         </div>
 
         {/* History & Actions Toolbar (Attached to the right) */}
@@ -759,6 +825,235 @@ export default function InfiniteBoard({
         </div>
       )}
 
+      {/* Top Right Shape Settings Dropdown */}
+      {(tool === 'rect' || tool === 'ellipse') && (
+        <div className="absolute top-20 right-6 z-50 flex flex-col bg-black/80 backdrop-blur-2xl shadow-2xl rounded-2xl border border-white/10 overflow-hidden w-[240px] transition-all duration-300">
+           <button 
+             onClick={() => setIsStyleMenuOpen(!isStyleMenuOpen)}
+             className="w-full px-4 py-3 text-sm text-white/80 hover:text-white flex items-center justify-between transition-colors hover:bg-white/5 active:bg-white/10"
+           >
+             <span className="font-medium flex items-center gap-2 text-white">
+               <span>{tool === 'rect' ? '□' : '○'}</span> 図形設定
+             </span>
+             <span className="text-[10px] text-white/50">{isStyleMenuOpen ? '▲' : '▼'}</span>
+           </button>
+           <div className={`w-full flex flex-col transition-all duration-300 ease-in-out ${isStyleMenuOpen ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+             <div className="p-4 pt-1 flex flex-col gap-4">
+               {/* 枠線の色 */}
+               <div>
+                 <div className="text-[10px] uppercase font-bold tracking-wider text-white/40 mb-3">枠線の色</div>
+                 <div className="flex gap-2 justify-between">
+                   {COLORS.map(c => (
+                     <button 
+                        key={c.id} 
+                        onClick={() => {
+                          setCurrentColor(c.hex);
+                          if (selectedNodeId) {
+                            const newNodes = dataRef.current.nodes?.map(n =>
+                              n.id === selectedNodeId && (n.type === 'rect' || n.type === 'ellipse') ? { ...n, color: c.hex } : n
+                            );
+                            const newData = { ...dataRef.current, nodes: newNodes };
+                            setData(newData); updateContent(JSON.stringify(newData));
+                          }
+                        }}
+                        title={c.id}
+                        className={`w-7 h-7 rounded-full shadow-inner transition-transform ${currentColor === c.hex ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black' : 'hover:scale-110'}`}
+                        style={{ backgroundColor: c.hex }}
+                     />
+                   ))}
+                 </div>
+               </div>
+               <div className="w-full h-px bg-white/10"></div>
+               {/* 塗りつぶし */}
+               <div>
+                 <div className="text-[10px] uppercase font-bold tracking-wider text-white/40 mb-3">塗りつぶし</div>
+                 <div className="flex gap-2">
+                   {/* 透明 */}
+                   <button
+                     title="塗りなし"
+                     onClick={() => {
+                       setCurrentFillColor('transparent');
+                       if (selectedNodeId) {
+                         const newNodes = dataRef.current.nodes?.map(n =>
+                           n.id === selectedNodeId && (n.type === 'rect' || n.type === 'ellipse') ? { ...n, fillColor: 'transparent' } : n
+                         );
+                         const newData = { ...dataRef.current, nodes: newNodes };
+                         setData(newData); updateContent(JSON.stringify(newData));
+                       }
+                     }}
+                     className={`w-7 h-7 rounded-full border border-white/40 flex items-center justify-center transition-transform ${currentFillColor === 'transparent' ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black' : 'hover:scale-110'}`}
+                     style={{ background: 'linear-gradient(135deg, transparent 45%, #ff4b4b 45%, #ff4b4b 55%, transparent 55%)' }}
+                   />
+                   {COLORS.map(c => (
+                     <button 
+                        key={c.id} 
+                        onClick={() => {
+                          setCurrentFillColor(c.hex + '55');
+                          if (selectedNodeId) {
+                            const newNodes = dataRef.current.nodes?.map(n =>
+                              n.id === selectedNodeId && (n.type === 'rect' || n.type === 'ellipse') ? { ...n, fillColor: c.hex + '55' } : n
+                            );
+                            const newData = { ...dataRef.current, nodes: newNodes };
+                            setData(newData); updateContent(JSON.stringify(newData));
+                          }
+                        }}
+                        title={c.id}
+                        className={`w-7 h-7 rounded-full shadow-inner transition-transform ${currentFillColor === c.hex + '55' ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black' : 'hover:scale-110'}`}
+                        style={{ backgroundColor: c.hex + '55', border: `2px solid ${c.hex}` }}
+                     />
+                   ))}
+                 </div>
+               </div>
+               <div className="w-full h-px bg-white/10"></div>
+               {/* 枠線の太さ */}
+               <div>
+                 <div className="flex items-center justify-between mb-2">
+                   <div className="text-[10px] uppercase font-bold tracking-wider text-white/40">枠線の太さ</div>
+                   <div className="text-[10px] font-mono text-white/60">{currentShapeStrokeWidth}px</div>
+                 </div>
+                 <input 
+                   type="range" min="1" max="20" value={currentShapeStrokeWidth}
+                   onChange={(e) => {
+                     const v = parseInt(e.target.value);
+                     setCurrentShapeStrokeWidth(v);
+                     if (selectedNodeId) {
+                       const newNodes = dataRef.current.nodes?.map(n =>
+                         n.id === selectedNodeId && (n.type === 'rect' || n.type === 'ellipse') ? { ...n, strokeWidth: v } : n
+                       );
+                       const newData = { ...dataRef.current, nodes: newNodes };
+                       setData(newData); updateContent(JSON.stringify(newData));
+                     }
+                   }}
+                   className="w-full accent-blue-500 cursor-pointer"
+                 />
+               </div>
+             </div>
+           </div>
+        </div>
+      )}
+
+      {/* ============================================================
+           選択中オブジェクト インスペクターパネル (Selectツール時のみ)
+      ============================================================ */}
+      {tool === 'select' && (() => {
+        const selNode   = selectedNodeId   ? (data.nodes || []).find(n => n.id === selectedNodeId)   : null;
+        const selStroke = selectedStrokeId ? data.strokes.find(s => s.id === selectedStrokeId) : null;
+
+        // 画像/YouTube/ページカードはインスペクター不要
+        if (!selStroke && (!selNode || selNode.type === 'image' || selNode.type === 'youtube' || selNode.type === 'page')) {
+          return null;
+        }
+
+        const typeLabel =
+          selStroke              ? '✏️ ストローク' :
+          selNode?.type === 'rect'    ? '□ 長方形' :
+          selNode?.type === 'ellipse' ? '○ 楕円' :
+          '📝 テキスト';
+
+        const currentColorVal = selStroke ? selStroke.color : (selNode?.color || '#ffffff');
+        const currentWidthVal = selStroke
+          ? selStroke.width
+          : selNode?.type === 'text'
+            ? (selNode.fontSize || 24)
+            : (selNode?.strokeWidth ?? 2);
+
+        return (
+          <div className="absolute top-20 right-6 z-50 flex flex-col bg-black/80 backdrop-blur-2xl shadow-2xl rounded-2xl border border-white/10 overflow-hidden w-[240px]">
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-white/10">
+              <span className="text-sm font-medium text-white">{typeLabel}</span>
+            </div>
+
+            <div className="p-4 flex flex-col gap-4">
+              {/* \u2500\u2500 色 \u2500\u2500 */}
+              <div>
+                <div className="text-[10px] uppercase font-bold tracking-wider text-white/40 mb-3">
+                  {selStroke ? '色' : selNode?.type === 'text' ? '\u6587\u5b57色' : '\u67a0\u7dda\u306e色'}
+                </div>
+                <div className="flex gap-2 justify-between">
+                  {COLORS.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => selStroke ? patchStroke({ color: c.hex }) : patchNode({ color: c.hex })}
+                      className={`w-7 h-7 rounded-full shadow-inner transition-transform ${
+                        currentColorVal === c.hex
+                          ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black'
+                          : 'hover:scale-110'
+                      }`}
+                      style={{ backgroundColor: c.hex }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* \u2500\u2500 塗りつぶし\uff08\u56f3\u5f62\u306e\u307f\uff09 \u2500\u2500 */}
+              {(selNode?.type === 'rect' || selNode?.type === 'ellipse') && (
+                <>
+                  <div className="w-full h-px bg-white/10" />
+                  <div>
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-white/40 mb-3">塗りつぶし</div>
+                    <div className="flex gap-2">
+                      <button
+                        title="塗りなし"
+                        onClick={() => patchNode({ fillColor: 'transparent' })}
+                        className={`w-7 h-7 rounded-full border border-white/40 transition-transform ${
+                          (selNode.fillColor || 'transparent') === 'transparent'
+                            ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black'
+                            : 'hover:scale-110'
+                        }`}
+                        style={{ background: 'linear-gradient(135deg, transparent 45%, #ff4b4b 45%, #ff4b4b 55%, transparent 55%)' }}
+                      />
+                      {COLORS.map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => patchNode({ fillColor: c.hex + '55' })}
+                          className={`w-7 h-7 rounded-full shadow-inner transition-transform ${
+                            selNode.fillColor === c.hex + '55'
+                              ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-black'
+                              : 'hover:scale-110'
+                          }`}
+                          style={{ backgroundColor: c.hex + '55', border: `2px solid ${c.hex}` }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* \u2500\u2500 太さ / \u30b5\u30a4\u30ba \u2500\u2500 */}
+              <div className="w-full h-px bg-white/10" />
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-white/40">
+                    {selStroke ? '太さ' : selNode?.type === 'text' ? 'フォントサイズ' : '\u67a0\u7dda\u306e太さ'}
+                  </div>
+                  <div className="text-[10px] font-mono text-white/60">{currentWidthVal}px</div>
+                </div>
+                <input
+                  type="range"
+                  min={selNode?.type === 'text' ? 12 : 1}
+                  max={selNode?.type === 'text' ? 120 : selStroke ? 32 : 20}
+                  value={currentWidthVal}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    if (selStroke)                 patchStroke({ width: v });
+                    else if (selNode?.type === 'text') patchNode({ fontSize: v });
+                    else                           patchNode({ strokeWidth: v });
+                  }}
+                  className="w-full accent-blue-500 cursor-pointer"
+                />
+                {/* Preview (\u30b9\u30c8\u30ed\u30fc\u30af\u306e\u307f) */}
+                {selStroke && (
+                  <div className="mt-2 flex items-center justify-center py-2 bg-white/5 rounded-lg border border-white/5 min-h-[36px]">
+                    <div className="rounded-full" style={{ width: currentWidthVal, height: currentWidthVal, backgroundColor: currentColorVal }} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Viewport for Infinite Canvas */}
       <div 
         ref={containerRef}
@@ -771,6 +1066,36 @@ export default function InfiniteBoard({
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
+
+          // ── 1) 画像ファイルのD&D ──────────────────────────────────────────
+          if (e.dataTransfer.files.length > 0) {
+            const imgFile = Array.from(e.dataTransfer.files).find(f => f.type.startsWith('image/'));
+            if (imgFile) {
+              const rect = containerRef.current?.getBoundingClientRect();
+              if (!rect) return;
+              const dropX = (e.clientX - rect.left - camera.x) / camera.z;
+              const dropY = (e.clientY - rect.top  - camera.y) / camera.z;
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                const dataUrl = ev.target?.result as string;
+                const newNode: RectNode = {
+                  id: crypto.randomUUID(), type: 'image', data: dataUrl,
+                  x: dropX - 150, y: dropY - 150,
+                  width: 300, height: 300
+                };
+                saveToHistory(JSON.stringify(dataRef.current));
+                const newData = { ...dataRef.current, nodes: [...(dataRef.current.nodes || []), newNode] };
+                setData(newData);
+                updateContent(JSON.stringify(newData));
+                setTool('select');
+                setSelectedNodeId(newNode.id);
+              };
+              reader.readAsDataURL(imgFile);
+              return;
+            }
+          }
+
+          // ── 2) サイドバーからのノートD&D ─────────────────────────────────
           const noteId = e.dataTransfer.getData("application/nemo-note-id");
           if (noteId) {
              const rect = containerRef.current?.getBoundingClientRect();
@@ -1009,6 +1334,32 @@ export default function InfiniteBoard({
                   </div>
                )}
 
+               {/* ── 長方形 ── */}
+               {node.type === 'rect' && (
+                 <div
+                   className="w-full h-full"
+                   style={{
+                     backgroundColor: node.fillColor || 'transparent',
+                     border: `${node.strokeWidth ?? 2}px solid ${node.color || '#ffffff'}`,
+                     borderRadius: '4px',
+                     boxSizing: 'border-box' as const,
+                   }}
+                 />
+               )}
+
+               {/* ── 楕円 ── */}
+               {node.type === 'ellipse' && (
+                 <div
+                   className="w-full h-full"
+                   style={{
+                     backgroundColor: node.fillColor || 'transparent',
+                     border: `${node.strokeWidth ?? 2}px solid ${node.color || '#ffffff'}`,
+                     borderRadius: '50%',
+                     boxSizing: 'border-box' as const,
+                   }}
+                 />
+               )}
+
                {/* Resize Handle - text nodes auto-size so no handle needed */}
                {selectedNodeId === node.id && node.type !== 'text' && tool === 'select' && (
                  <div 
@@ -1092,6 +1443,31 @@ export default function InfiniteBoard({
                 strokeLinejoin="round" 
               />
             )}
+
+            {/* 図形描画プレビュー */}
+            {shapeStartPt && shapeCurPt && (tool === 'rect' || tool === 'ellipse') && (() => {
+              const x = Math.min(shapeStartPt.x, shapeCurPt.x);
+              const y = Math.min(shapeStartPt.y, shapeCurPt.y);
+              const w = Math.abs(shapeCurPt.x - shapeStartPt.x);
+              const h = Math.abs(shapeCurPt.y - shapeStartPt.y);
+              const fill = currentFillColor === 'transparent' ? 'none' : currentFillColor;
+              const sw   = currentShapeStrokeWidth;
+              if (tool === 'rect') {
+                return (
+                  <rect x={x} y={y} width={w} height={h}
+                    fill={fill}
+                    stroke={currentColor} strokeWidth={sw} strokeDasharray="8,4"
+                    rx={4}
+                  />
+                );
+              }
+              return (
+                <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2}
+                  fill={fill}
+                  stroke={currentColor} strokeWidth={sw} strokeDasharray="8,4"
+                />
+              );
+            })()}
           </svg>
 
           {/* ----- Edges (Arrows between nodes) ----- */}

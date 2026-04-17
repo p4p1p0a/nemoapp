@@ -187,7 +187,7 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
               </div>
             </div>
             <select value={freq} onChange={e => setFreq(e.target.value as RecurrenceFreq)}
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none cursor-pointer">
+              className="flex-1 bg-[#1a1a1a] [&>option]:bg-[#1a1a1a] [&>option]:text-white border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none cursor-pointer">
               {FREQ_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
@@ -330,7 +330,7 @@ function EventModal({ initial, onSave, onDelete, onClose }: {
             <span className="text-xs text-white/35 w-12 flex-shrink-0 mt-2.5">繰り返し</span>
             <div className="flex-1 flex flex-col gap-1">
               <select value={recSelectValue()} onChange={handleRecSelect}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-blue-500/60 cursor-pointer">
+                className="w-full bg-[#1a1a1a] [&>option]:bg-[#1a1a1a] [&>option]:text-white border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-blue-500/60 cursor-pointer">
                 <option value="none">繰り返しなし</option>
                 <option value="daily">毎日</option>
                 <option value="weekly">毎週 ({DAYS_JP[parseDate(form.date).getDay()]}曜日)</option>
