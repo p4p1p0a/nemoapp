@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { Note } from "../types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type RecurrenceFreq = 'day' | 'week' | 'month' | 'year';
@@ -7,9 +8,9 @@ export type RecurrenceFreq = 'day' | 'week' | 'month' | 'year';
 export type RecurrenceRule = {
   freq: RecurrenceFreq;
   interval: number;
-  byDay?: number[];            // 0=Sun…6=Sat (week only)
+  byDay?: number[];
   endType: 'never' | 'date' | 'count';
-  endDate?: string;            // YYYY-MM-DD
+  endDate?: string;
   count?: number;
 };
 
@@ -23,6 +24,7 @@ export type CalendarEvent = {
   color: string;
   description: string;
   recurrence?: RecurrenceRule;
+  linkedNoteId?: string;   // ← ノート連携
 };
 
 type EventInstance = CalendarEvent & { _isInstance?: boolean };
@@ -143,6 +145,90 @@ function recLabel(rule?: RecurrenceRule): string {
   return s;
 }
 
+// ─── デイリーノート検索ヘルパー ───────────────────────────────────────────────
+function findDailyNote(dateStr: string, notes: Note[]): Note | null {
+  const [yyyy, mm, dd] = dateStr.split('-');
+  const yearFolder  = notes.find(n => n.parentId === null && n.title === yyyy);
+  if (!yearFolder) return null;
+  const monthFolder = notes.find(n => n.parentId === yearFolder.id && n.title === mm);
+  if (!monthFolder) return null;
+  return notes.find(n => n.parentId === monthFolder.id && (n.title === dd || n.title === dateStr)) ?? null;
+}
+
+// 日付のデイリーノート状態を返す
+type DailyNoteStatus = 'has-note' | 'no-note-past' | 'no-note-future';
+function getDailyNoteStatus(dateStr: string, notes: Note[]): DailyNoteStatus {
+  if (findDailyNote(dateStr, notes)) return 'has-note';
+  return dateStr <= todayStr() ? 'no-note-past' : 'no-note-future';
+}
+
+// ─── NoteSelector ─────────────────────────────────────────────────────────────
+function NoteSelector({ notes, onSelect }: { notes: Note[]; onSelect: (id: string) => void }) {
+  const [search, setSearch] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'note' | 'board'>('all');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = notes
+    .filter(n => {
+      if (filter === 'note')  return n.type !== 'board';
+      if (filter === 'board') return n.type === 'board';
+      return true;
+    })
+    .filter(n => n.title.toLowerCase().includes(search.toLowerCase()))
+    .slice(0, 12);
+
+  const FILTERS = [['all', 'すべて'], ['note', '📄 ノート'], ['board', '🎨 ボード']] as const;
+
+  return (
+    <div ref={ref} className="relative flex flex-col gap-1.5">
+      {/* フィルタータブ */}
+      <div className="flex gap-1">
+        {FILTERS.map(([v, label]) => (
+          <button key={v} onClick={() => setFilter(v)}
+            className={`text-[11px] px-2.5 py-0.5 rounded-full transition-colors ${
+              filter === v ? 'bg-blue-500/25 text-blue-300 border border-blue-500/30' : 'text-white/30 hover:text-white/60 border border-transparent'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <input
+        placeholder={filter === 'board' ? 'ボードを検索...' : filter === 'note' ? 'ノートを検索...' : 'ノート / ボードを検索...'}
+        value={search}
+        onChange={e => { setSearch(e.target.value); setIsOpen(true); }}
+        onFocus={() => setIsOpen(true)}
+        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-blue-500/60 placeholder:text-white/30 transition-colors"
+      />
+      {isOpen && filtered.length > 0 && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[#242424] border border-white/10 rounded-xl shadow-2xl max-h-[180px] overflow-y-auto">
+          {filtered.map(note => (
+            <button
+              key={note.id}
+              onClick={() => { onSelect(note.id); setSearch(''); setIsOpen(false); }}
+              className="w-full text-left px-3 py-2.5 text-sm text-white hover:bg-white/10 transition-colors flex items-center gap-2"
+            >
+              <span className="text-base leading-none">{note.type === 'board' ? '🎨' : note.type === 'daily' ? '📆' : '📄'}</span>
+              <span className="truncate flex-1">{note.title || '無題'}</span>
+              {note.type === 'board' && (
+                <span className="text-[10px] text-blue-400/60 border border-blue-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">ボード</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── RecurrenceModal ──────────────────────────────────────────────────────────
 function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
   initial?: RecurrenceRule; baseDate: string;
@@ -172,7 +258,6 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
         onClick={e => e.stopPropagation()}>
         <h2 className="text-base font-semibold text-white">カスタムの繰り返し</h2>
 
-        {/* 繰り返す間隔 */}
         <div>
           <div className="text-sm text-white/45 mb-3">繰り返す間隔:</div>
           <div className="flex items-center gap-3">
@@ -193,7 +278,6 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
           </div>
         </div>
 
-        {/* 曜日（週のみ） */}
         {freq === 'week' && (
           <div>
             <div className="text-sm text-white/45 mb-3">曜日:</div>
@@ -211,16 +295,13 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
           </div>
         )}
 
-        {/* 終了 */}
         <div>
           <div className="text-sm text-white/45 mb-3">終了日</div>
           <div className="flex flex-col gap-3.5">
-            {/* なし */}
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="radio" name="et" value="never" checked={endType==='never'} onChange={() => setEndType('never')} className="accent-blue-500 w-4 h-4" />
               <span className="text-sm text-white/70">なし</span>
             </label>
-            {/* 終了日 */}
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="radio" name="et" value="date" checked={endType==='date'} onChange={() => setEndType('date')} className="accent-blue-500 w-4 h-4" />
               <span className="text-sm text-white/70 w-16">終了日:</span>
@@ -228,7 +309,6 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
                 onClick={() => setEndType('date')}
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-blue-500/60 transition-colors" />
             </label>
-            {/* 回数 */}
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="radio" name="et" value="count" checked={endType==='count'} onChange={() => setEndType('count')} className="accent-blue-500 w-4 h-4" />
               <span className="text-sm text-white/70 w-16">繰り返し:</span>
@@ -257,11 +337,13 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
 }
 
 // ─── EventModal ───────────────────────────────────────────────────────────────
-function EventModal({ initial, onSave, onDelete, onClose }: {
+function EventModal({ initial, onSave, onDelete, onClose, notes, onNavigateToNote }: {
   initial: Partial<CalendarEvent> & { date: string };
   onSave: (ev: Omit<CalendarEvent,'id'>) => void;
   onDelete?: () => void;
   onClose: () => void;
+  notes?: Note[];
+  onNavigateToNote?: (noteId: string) => void;
 }) {
   const [form, setForm] = useState<Omit<CalendarEvent,'id'>>({ ...blankEvent(initial.date), ...initial });
   const [showRecModal, setShowRecModal] = useState(false);
@@ -291,6 +373,8 @@ function EventModal({ initial, onSave, onDelete, onClose }: {
     };
     set('recurrence', presets[v]);
   };
+
+  const linkedNote = notes?.find(n => n.id === form.linkedNoteId);
 
   return (
     <>
@@ -363,6 +447,36 @@ function EventModal({ initial, onSave, onDelete, onClose }: {
           <textarea rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="説明（任意）"
             className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-blue-500/60 resize-none" />
 
+          {/* ── 紐づけられたノート ── */}
+          {notes && notes.length > 0 && (
+            <div className="border-t border-white/10 pt-4">
+              <div className="text-xs text-white/35 mb-2 flex items-center gap-1.5">
+                <span>📄</span>
+                <span>紐づけられたノート</span>
+              </div>
+              {form.linkedNoteId && linkedNote ? (
+                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
+                  <span className="text-white/40 text-xs">{linkedNote.type === 'board' ? '🎨' : '📄'}</span>
+                  <span className="flex-1 text-sm text-white truncate">{linkedNote.title || '無題'}</span>
+                  <button
+                    onClick={() => { onNavigateToNote?.(form.linkedNoteId!); onClose(); }}
+                    className="text-blue-400 text-xs hover:text-blue-300 transition-colors px-2 py-1 rounded hover:bg-blue-500/10"
+                  >
+                    開く →
+                  </button>
+                  <button
+                    onClick={() => set('linkedNoteId', undefined)}
+                    className="text-white/30 hover:text-red-400 text-xs transition-colors px-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <NoteSelector notes={notes} onSelect={(id) => set('linkedNoteId', id)} />
+              )}
+            </div>
+          )}
+
           <div className="flex gap-2 justify-end mt-1">
             {onDelete && <button onClick={onDelete} className="px-4 py-2 rounded-xl text-sm text-red-400 hover:bg-red-500/10 transition-colors">削除</button>}
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-white/45 hover:bg-white/10 transition-colors">キャンセル</button>
@@ -386,10 +500,12 @@ function EventModal({ initial, onSave, onDelete, onClose }: {
 }
 
 // ─── Month View ───────────────────────────────────────────────────────────────
-function MonthView({ anchor, events, openCreate, openEdit }: {
+function MonthView({ anchor, events, openCreate, openEdit, notes, onOpenDailyNote }: {
   anchor: Date; events: CalendarEvent[];
   openCreate: (date: string) => void;
   openEdit: (ev: CalendarEvent) => void;
+  notes?: Note[];
+  onOpenDailyNote?: (dateStr: string) => void;
 }) {
   const cells     = getMonthGrid(anchor);
   const today     = todayStr();
@@ -407,18 +523,41 @@ function MonthView({ anchor, events, openCreate, openEdit }: {
       <div className="flex-1 overflow-y-auto grid grid-cols-7"
         style={{ gridTemplateRows:`repeat(${cells.length/7},minmax(100px,1fr))` }}>
         {cells.map((cell,idx) => {
-          const ds     = fmt(cell);
-          const isToday= ds===today;
-          const isCur  = cell.getMonth()===curMonth;
-          const dow    = cell.getDay();
-          const dayEvs = instances.filter(e=>e.date===ds);
+          const ds      = fmt(cell);
+          const isToday = ds === today;
+          const isCur   = cell.getMonth() === curMonth;
+          const dow     = cell.getDay();
+          const dayEvs  = instances.filter(e => e.date === ds);
+          const dailyStatus = notes && isCur ? getDailyNoteStatus(ds, notes) : null;
           return (
             <div key={idx} onClick={() => openCreate(ds)}
               className={`border-b border-r border-white/[0.06] p-1.5 cursor-pointer hover:bg-white/[0.025] transition-colors flex flex-col gap-0.5 ${idx%7===0?'border-l':''}`}>
-              <div className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium self-start mb-0.5
-                ${isToday?'bg-blue-500 text-white':''}
-                ${!isToday&&isCur?(dow===0?'text-red-400':dow===6?'text-blue-400':'text-white/80'):!isToday?'text-white/20':''}`}>
-                {cell.getDate()}
+              {/* 日付数字 + デイリーノートインジケーター */}
+              <div className="flex items-center gap-1 self-start mb-0.5">
+                <div
+                  className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium transition-colors
+                    ${isToday ? 'bg-blue-500 text-white' : ''}
+                    ${!isToday && isCur ? (dow===0 ? 'text-red-400' : dow===6 ? 'text-blue-400' : 'text-white/80') : !isToday ? 'text-white/20' : ''}
+                    ${onOpenDailyNote ? 'hover:bg-white/15 cursor-pointer' : ''}
+                  `}
+                  onClick={onOpenDailyNote ? (e) => { e.stopPropagation(); onOpenDailyNote(ds); } : undefined}
+                >
+                  {cell.getDate()}
+                </div>
+                {dailyStatus === 'has-note' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.7)] cursor-pointer flex-shrink-0"
+                    onClick={e => { e.stopPropagation(); onOpenDailyNote?.(ds); }}
+                    title="デイリーノートを開く"
+                  />
+                )}
+                {dailyStatus === 'no-note-past' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_3px_rgba(239,68,68,0.5)] cursor-pointer flex-shrink-0"
+                    onClick={e => { e.stopPropagation(); onOpenDailyNote?.(ds); }}
+                    title="デイリーノートを作成する"
+                  />
+                )}
               </div>
               {dayEvs.slice(0,3).map((ev,i) => (
                 <div key={ev.id+'_'+i} onClick={e=>{e.stopPropagation();openEdit(ev);}}
@@ -439,10 +578,12 @@ function MonthView({ anchor, events, openCreate, openEdit }: {
 }
 
 // ─── Time Grid ────────────────────────────────────────────────────────────────
-function TimeGridView({ days, events, openCreate, openEdit }: {
+function TimeGridView({ days, events, openCreate, openEdit, notes, onOpenDailyNote }: {
   days: Date[]; events: CalendarEvent[];
   openCreate: (date: string, startTime?: string) => void;
   openEdit: (ev: CalendarEvent) => void;
+  notes?: Note[];
+  onOpenDailyNote?: (dateStr: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const today     = todayStr();
@@ -460,11 +601,38 @@ function TimeGridView({ days, events, openCreate, openEdit }: {
       <div className="grid border-b border-white/10 flex-shrink-0" style={{gridTemplateColumns:cols}}>
         <div className="border-r border-white/[0.06]" />
         {days.map((d,i)=>{
-          const isToday=fmt(d)===today, dow=d.getDay();
+          const ds = fmt(d);
+          const isToday = ds === today;
+          const dow = d.getDay();
+          const dailyStatus = notes ? getDailyNoteStatus(ds, notes) : null;
           return (
             <div key={i} className="flex flex-col items-center py-2 border-r border-white/[0.06] last:border-r-0">
               <span className={`text-[11px] font-medium ${dow===0?'text-red-400/70':dow===6?'text-blue-400/70':'text-white/30'}`}>{DAYS_JP[dow]}</span>
-              <div className={`w-9 h-9 flex items-center justify-center rounded-full text-base font-semibold mt-0.5 ${isToday?'bg-blue-500 text-white':'text-white/75'}`}>{d.getDate()}</div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <div
+                  className={`w-9 h-9 flex items-center justify-center rounded-full text-base font-semibold transition-colors
+                    ${isToday ? 'bg-blue-500 text-white' : 'text-white/75'}
+                    ${onOpenDailyNote ? 'hover:bg-white/10 cursor-pointer' : ''}
+                  `}
+                  onClick={onOpenDailyNote ? () => onOpenDailyNote(ds) : undefined}
+                >
+                  {d.getDate()}
+                </div>
+                {dailyStatus === 'has-note' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.7)] cursor-pointer flex-shrink-0"
+                    onClick={() => onOpenDailyNote?.(ds)}
+                    title="デイリーノートを開く"
+                  />
+                )}
+                {dailyStatus === 'no-note-past' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_3px_rgba(239,68,68,0.5)] cursor-pointer flex-shrink-0"
+                    onClick={() => onOpenDailyNote?.(ds)}
+                    title="デイリーノートを作成する"
+                  />
+                )}
+              </div>
             </div>
           );
         })}
@@ -492,7 +660,6 @@ function TimeGridView({ days, events, openCreate, openEdit }: {
       {/* Time grid */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="relative grid" style={{gridTemplateColumns:cols,height:`${HOUR_PX*24}px`}}>
-          {/* Hour labels */}
           <div className="relative border-r border-white/[0.06]">
             {HOURS.map(h=>(
               <div key={h} className="absolute right-2 text-[11px] text-white/20 select-none" style={{top:h*HOUR_PX-8}}>
@@ -500,7 +667,6 @@ function TimeGridView({ days, events, openCreate, openEdit }: {
               </div>
             ))}
           </div>
-          {/* Day columns */}
           {days.map((d,di)=>{
             const ds=fmt(d), isToday=ds===today;
             return (
@@ -538,7 +704,15 @@ function TimeGridView({ days, events, openCreate, openEdit }: {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function Calendar() {
+export default function Calendar({
+  notes,
+  onOpenDailyNote,
+  onNavigateToNote,
+}: {
+  notes?: Note[];
+  onOpenDailyNote?: (dateStr: string) => void;
+  onNavigateToNote?: (noteId: string) => void;
+}) {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [view,   setView]   = useState<'month'|'week'|'day'>('month');
   const [anchor, setAnchor] = useState(new Date());
@@ -603,9 +777,9 @@ export default function Calendar() {
         </button>
       </div>
 
-      {view==='month' && <MonthView    anchor={anchor} events={events} openCreate={openCreate} openEdit={openEdit} />}
-      {view==='week'  && <TimeGridView days={getWeekDays(anchor)} events={events} openCreate={openCreate} openEdit={openEdit} />}
-      {view==='day'   && <TimeGridView days={[anchor]}            events={events} openCreate={openCreate} openEdit={openEdit} />}
+      {view==='month' && <MonthView    anchor={anchor} events={events} openCreate={openCreate} openEdit={openEdit} notes={notes} onOpenDailyNote={onOpenDailyNote} />}
+      {view==='week'  && <TimeGridView days={getWeekDays(anchor)} events={events} openCreate={openCreate} openEdit={openEdit} notes={notes} onOpenDailyNote={onOpenDailyNote} />}
+      {view==='day'   && <TimeGridView days={[anchor]}            events={events} openCreate={openCreate} openEdit={openEdit} notes={notes} onOpenDailyNote={onOpenDailyNote} />}
 
       {modal && (
         <EventModal
@@ -613,6 +787,8 @@ export default function Calendar() {
           onSave={data => modal.mode==='create' ? addEvent(data) : updateEvent((modal.data as CalendarEvent).id, data)}
           onDelete={modal.mode==='edit' ? () => deleteEvent((modal.data as CalendarEvent).id) : undefined}
           onClose={() => setModal(null)}
+          notes={notes}
+          onNavigateToNote={onNavigateToNote}
         />
       )}
     </div>

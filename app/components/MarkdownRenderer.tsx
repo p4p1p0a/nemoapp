@@ -1,6 +1,6 @@
 "use client";
 
-import { Note } from '../page';
+import { Note } from '../types';
 
 // ── Inline token types ────────────────────────────────────────────────────────
 type InlineToken =

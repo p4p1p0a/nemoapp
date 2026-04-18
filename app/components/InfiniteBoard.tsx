@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
-import { Note, extractYouTubeIds } from '../page';
+import { Note } from '../types';
+import { extractYouTubeIds } from '../lib/utils';
 
 type Point = { x: number; y: number };
 type Stroke = {
