@@ -128,6 +128,75 @@ export function useAppState() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ── リアルタイム同期（リスナー） ───────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase.channel('realtime-sync')
+      // ノートの監視
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, (payload) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const newData = payload.new as Note;
+          setNotes(current => {
+            const idx = current.findIndex(n => n.id === newData.id);
+            if (idx === -1) return [...current, newData];
+            if (newData.updatedAt > (current[idx].updatedAt || 0)) {
+              const next = [...current];
+              next[idx] = newData;
+              return next;
+            }
+            return current;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any).id;
+          setNotes(current => current.filter(n => n.id !== oldId));
+        }
+      })
+      // カレンダーイベントの監視
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, (payload) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const newData = payload.new as CalendarEvent;
+          setCalendarEvents(current => {
+            const idx = current.findIndex(e => e.id === newData.id);
+            if (idx === -1) return [...current, newData];
+            if (newData.updatedAt > (current[idx].updatedAt || 0)) {
+              const next = [...current];
+              next[idx] = newData;
+              return next;
+            }
+            return current;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any).id;
+          setCalendarEvents(current => current.filter(e => e.id !== oldId));
+        }
+      })
+      // ジャンルの監視
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'genres' }, (payload) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const newData = payload.new as Genre;
+          setGenres(current => {
+            const idx = current.findIndex(g => g.id === newData.id);
+            if (idx === -1) return [...current, newData];
+            if (newData.updatedAt > (current[idx].updatedAt || 0)) {
+              const next = [...current];
+              next[idx] = newData;
+              return next;
+            }
+            return current;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any).id;
+          setGenres(current => current.filter(g => g.id !== oldId));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
   // ── localStorage 初期ロード ─────────────────────────────────────────────────
   useEffect(() => {
     try {
