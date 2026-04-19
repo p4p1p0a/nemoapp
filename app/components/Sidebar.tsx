@@ -38,7 +38,7 @@ export const Sidebar = ({
 
   return (
     <aside
-      className="bg-[#0a0a0a] border-r border-white/10 flex flex-col pt-6 pb-6 h-full flex-shrink-0 relative"
+      className="bg-sidebar-bg border-r border-border-color flex flex-col pt-6 pb-6 h-full flex-shrink-0 relative"
       style={{ width: `${sidebarWidth}px` }}
       onDragOver={e => e.preventDefault()}
       onDrop={e => {
@@ -151,6 +151,18 @@ export const Sidebar = ({
                 setDraggedNodeId={setDraggedNodeId}
                 setNotes={setNotes}
                 isDescendant={isDescendant}
+                onCreateChild={(parentId, type) => {
+                  const newNote = {
+                    id: crypto.randomUUID(),
+                    title: type === 'board' ? '無題のボード' : '無題のノート',
+                    content: type === 'board' ? JSON.stringify({ strokes: [], nodes: [], edges: [] }) : '',
+                    parentId,
+                    updatedAt: Date.now(),
+                    type,
+                  };
+                  setNotes(prev => [...prev, newNote]);
+                  activateNote(newNote.id, newNote.title);
+                }}
               />
             ))}
             {rootNotes.length === 0 && (

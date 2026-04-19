@@ -100,9 +100,23 @@ export const NoteDetailView = ({
   );
 
   return (
-    <>
+    <div className="relative">
+      {/* カラー装飾 */}
+      {activeNote.color && (
+        <>
+          <div 
+            className="absolute -top-12 -right-12 w-48 h-48 pointer-events-none opacity-20 blur-3xl z-0"
+            style={{ backgroundColor: activeNote.color }}
+          />
+          <div 
+            className="absolute top-0 -left-8 bottom-0 w-1.5 rounded-full z-10 opacity-60"
+            style={{ backgroundColor: activeNote.color }}
+          />
+        </>
+      )}
+
       {/* タイトル */}
-      <div className="flex items-center justify-between mt-4 mb-8">
+      <div className="flex items-center justify-between mt-4 mb-8 relative z-10">
         <input
           key={`title-${activeNote.id}`}
           type="text"
@@ -218,6 +232,6 @@ export const NoteDetailView = ({
           </>
         )}
       </section>
-    </>
+    </div>
   );
 };
