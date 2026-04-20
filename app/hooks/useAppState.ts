@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Note, Tab, CalendarEvent, Genre } from "../types";
 import { getTodayString } from "../lib/utils";
 import { supabase } from "../lib/supabase";
@@ -48,6 +48,12 @@ export function useAppState() {
 
   // ── 同期強化: 削除済みIDの追跡 ──────────────────────────────────────────────
   const [pendingDeletions, setPendingDeletions] = useState<string[]>([]);
+  const deletionsRef = useRef<Set<string>>(new Set());
+
+  // pendingDeletions（ステート）が変わったら Ref も更新して最新値を維持
+  useEffect(() => {
+    deletionsRef.current = new Set(pendingDeletions);
+  }, [pendingDeletions]);
 
   // リサイズマウスイベント
   useEffect(() => {
@@ -80,7 +86,7 @@ export function useAppState() {
     const { remoteNotes, remoteEvents, remoteGenres } = await fetchAllFromSupabase(currentUser.id);
 
     // 削除待機中のIDをセットにする（検索用）
-    const deletedSet = new Set(pendingDeletions);
+    const deletedSet = deletionsRef.current;
 
     setNotes(current => {
       // リモートから降ってきたデータのうち、削除待機中のものは除外する
@@ -151,6 +157,7 @@ export function useAppState() {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as Note;
           setNotes(current => {
+            if (deletionsRef.current.has(newData.id)) return current; // 削除中なら無視
             const idx = current.findIndex(n => n.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
@@ -170,6 +177,7 @@ export function useAppState() {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as CalendarEvent;
           setCalendarEvents(current => {
+            if (deletionsRef.current.has(newData.id)) return current;
             const idx = current.findIndex(e => e.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
@@ -189,6 +197,7 @@ export function useAppState() {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as Genre;
           setGenres(current => {
+            if (deletionsRef.current.has(newData.id)) return current;
             const idx = current.findIndex(g => g.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
@@ -225,8 +234,8 @@ export function useAppState() {
 
       const hasError = results.some(r => r.error);
       if (!hasError) {
-        // 全テーブルで成功（または対象なし）した場合はリストをクリア
-        setPendingDeletions([]);
+        // 削除に成功したIDのみをリストから除外する
+        setPendingDeletions(prev => prev.filter(id => !ids.includes(id)));
       }
     };
 
