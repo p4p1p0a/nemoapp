@@ -24,8 +24,8 @@ export default function Home() {
     openOrCreateDailyNote,
     todayTitle, hasWrittenToday, shouldShowDailyEditor,
     activeNote, rootNotes, childNotes,
-    calendarEvents, setCalendarEvents,
-    genres, setGenres,
+    calendarEvents, setCalendarEvents, handleDeleteEvent,
+    genres, setGenres, handleDeleteGenre,
     theme, setTheme,
     dailyColor, setDailyColor,
     user, handleLogout,
@@ -176,8 +176,10 @@ export default function Home() {
               }}
               events={calendarEvents}
               onSaveEvents={setCalendarEvents}
+              onDeleteEvent={handleDeleteEvent}
               genres={genres}
               onSaveGenres={setGenres}
+              onDeleteGenre={handleDeleteGenre}
             />
           </div>
 

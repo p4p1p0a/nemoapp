@@ -283,7 +283,12 @@ function GenreManager({ genres, onSave, onClose }: { genres: Genre[]; onSave: (g
     const next = list.map(g => g.id === editingId ? { ...g, name: editName, color: editColor, updatedAt: Date.now() } : g);
     setList(next); onSave(next); setEditingId(null);
   };
-  const handleDelete = (id: string) => { if (list.length <= 1) return; const next = list.filter(g => g.id !== id); setList(next); onSave(next); };
+  const handleDelete = (id: string) => { 
+    if (list.length <= 1) return;
+    if (confirm('このジャンルを削除しますか？')) {
+      onDelete?.(id);
+    }
+  };
   return (
     <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/80 backdrop-blur-md" onClick={onClose}>
       <div className="bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl p-7 w-[480px] max-w-[95vw] flex flex-col gap-6" onClick={e => e.stopPropagation()}>
@@ -319,6 +324,18 @@ function GenreManager({ genres, onSave, onClose }: { genres: Genre[]; onSave: (g
       </div>
     </div>
   );
+}
+
+interface CalendarProps {
+  notes?: Note[];
+  onOpenDailyNote?: (dateStr: string) => void;
+  onNavigateToNote?: (noteId: string) => void;
+  events: CalendarEvent[];
+  onSaveEvents: (evs: CalendarEvent[]) => void;
+  onDeleteEvent?: (id: string, date?: string, mode?: 'only' | 'following' | 'all') => void;
+  genres: Genre[];
+  onSaveGenres: (gs: Genre[]) => void;
+  onDeleteGenre?: (id: string) => void;
 }
 
 function EventModal({ initial, onSave, onDelete, onClose, notes, onNavigateToNote, genres, onOpenGenreManager }: {
@@ -374,6 +391,26 @@ function EventModal({ initial, onSave, onDelete, onClose, notes, onNavigateToNot
           )}
           <div className="flex items-start gap-3"><span className="text-xs text-white/35 w-12 flex-shrink-0 mt-2.5">ジャンル</span><div className="flex-1 flex flex-col gap-2"><div className="flex gap-2"><select value={form.genreId || ''} onChange={e => handleGenreChange(e.target.value)} className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none cursor-pointer">{!form.genreId && <option value="">選択してください</option>}{genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select><button onClick={onOpenGenreManager} className="p-2.5 bg-white/5 border border-white/10 rounded-xl text-white/40 hover:text-white transition-colors">⚙️</button></div></div></div>
           <div className="flex items-start gap-3"><span className="text-xs text-white/35 w-12 flex-shrink-0 mt-2.5">繰り返し</span><select value={recSelectValue()} onChange={handleRecSelect} className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm outline-none cursor-pointer"><option value="none">繰り返しなし</option><option value="daily">毎日</option><option value="weekly">毎週</option><option value="monthly">毎月</option><option value="yearly">毎年</option><option value="custom">カスタム...</option></select></div>
+
+          {/* ── 紐づけられたノート ── */}
+          {notes && notes.length > 0 && (
+            <div className="border-t border-white/10 pt-4">
+              <div className="text-xs text-white/35 mb-2 flex items-center gap-1.5">
+                <span>📄</span>
+                <span>紐づけられたノート</span>
+              </div>
+              {form.linkedNoteId && linkedNote ? (
+                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
+                  <span className="text-base leading-none">{linkedNote.type === 'board' ? '🎨' : linkedNote.type === 'daily' ? '📆' : '📄'}</span>
+                  <span className="flex-1 text-sm text-white truncate">{linkedNote.title || '無題'}</span>
+                  <button onClick={() => { onNavigateToNote?.(form.linkedNoteId!); onClose(); }} className="text-blue-400 text-xs hover:text-blue-300 transition-colors px-2 py-1 rounded hover:bg-blue-500/10">開く →</button>
+                  <button onClick={() => set('linkedNoteId', undefined)} className="text-white/30 hover:text-red-400 text-xs transition-colors px-1">✕</button>
+                </div>
+              ) : (
+                <NoteSelector notes={notes} onSelect={(id) => set('linkedNoteId', id)} />
+              )}
+            </div>
+          )}
           <div className="flex gap-2 justify-end mt-4">
             {onDelete && <button onClick={onDelete} className="px-4 py-2 rounded-xl text-sm text-red-400 hover:bg-red-500/10 transition-colors">削除</button>}
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-white/45 hover:bg-white/10 transition-colors">キャンセル</button>
@@ -421,11 +458,40 @@ function MonthView({ anchor, events, onSelectDay, openEdit, notes, onOpenDailyNo
       <div className="flex-1 overflow-y-auto grid grid-cols-7" style={{ gridTemplateRows:`repeat(${cells.length/7},minmax(100px,1fr))` }}>
         {cells.map((cell,idx) => {
           const ds = fmt(cell);
+          const isCur = cell.getMonth() === curMonth;
+          const dailyStatus = notes && isCur ? getDailyNoteStatus(ds, notes) : null;
+
           return (
             <div key={idx} onClick={() => onSelectDay(ds)} className={`border-b border-r border-white/[0.06] p-1.5 cursor-pointer hover:bg-white/[0.025] flex flex-col gap-0.5 ${idx%7===0?'border-l':''}`}>
-              <div className="w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium transition-colors" style={{ backgroundColor: ds===today?'#3b82f6':'transparent' }}>{cell.getDate()}</div>
+              {/* 日付数字 + デイリーノートインジケーター */}
+              <div className="flex items-center gap-1 self-start mb-0.5">
+                <div
+                  className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium transition-colors
+                    ${ds===today ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'text-white/80'}
+                    ${!isCur ? 'opacity-20' : ''}
+                    ${onOpenDailyNote ? 'hover:bg-white/10' : ''}
+                  `}
+                  onClick={onOpenDailyNote && isCur ? (e) => { e.stopPropagation(); onOpenDailyNote(ds); } : undefined}
+                >
+                  {cell.getDate()}
+                </div>
+                {dailyStatus === 'has-note' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.7)] cursor-pointer flex-shrink-0"
+                    onClick={e => { e.stopPropagation(); onOpenDailyNote?.(ds); }}
+                    title="デイリーノートを開く"
+                  />
+                )}
+                {dailyStatus === 'no-note-past' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_3px_rgba(239,68,68,0.5)] cursor-pointer flex-shrink-0"
+                    onClick={e => { e.stopPropagation(); onOpenDailyNote?.(ds); }}
+                    title="デイリーノートを作成する"
+                  />
+                )}
+              </div>
               {instances.filter(e => e.date === ds).slice(0,3).map((ev,i) => (
-                <div key={ev.id+i} onClick={e=>{e.stopPropagation();openEdit(ev);}} className="text-[11px] px-1.5 py-0.5 rounded text-white truncate truncate" style={{ backgroundColor: ev.color+'cc' }}>{ev.title}</div>
+                <div key={ev.id+i} onClick={e=>{e.stopPropagation();openEdit(ev);}} className="text-[11px] px-1.5 py-0.5 rounded text-white truncate" style={{ backgroundColor: ev.color+'cc' }}>{ev.title}</div>
               ))}
             </div>
           );
@@ -454,7 +520,40 @@ function TimeGridView({ days, events, openCreate, openEdit, notes, onOpenDailyNo
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="grid border-b border-white/10 flex-shrink-0" style={{gridTemplateColumns:cols}}>
         <div className="border-r border-white/[0.06]" />
-        {days.map((d,i)=>(<div key={i} className="flex flex-col items-center py-2 border-r border-white/[0.06] last:border-r-0"><span className="text-[11px] text-white/30">{DAYS_JP[d.getDay()]}</span><div className={`w-9 h-9 flex items-center justify-center rounded-full text-base font-semibold transition-colors ${fmt(d)===today?'bg-blue-500 text-white':'text-white/75'}`}>{d.getDate()}</div></div>))}
+        {days.map((d,i)=>{
+          const ds = fmt(d);
+          const dailyStatus = notes ? getDailyNoteStatus(ds, notes) : null;
+          return (
+            <div key={i} className="flex flex-col items-center py-2 border-r border-white/[0.06] last:border-r-0">
+              <span className="text-[11px] text-white/30">{DAYS_JP[d.getDay()]}</span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <div
+                  className={`w-9 h-9 flex items-center justify-center rounded-full text-base font-semibold transition-colors
+                    ${ds===today ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'text-white/75'}
+                    ${onOpenDailyNote ? 'hover:bg-white/10 cursor-pointer' : ''}
+                  `}
+                  onClick={onOpenDailyNote ? () => onOpenDailyNote(ds) : undefined}
+                >
+                  {d.getDate()}
+                </div>
+                {dailyStatus === 'has-note' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.7)] cursor-pointer flex-shrink-0"
+                    onClick={() => onOpenDailyNote?.(ds)}
+                    title="デイリーノートを開く"
+                  />
+                )}
+                {dailyStatus === 'no-note-past' && (
+                  <div
+                    className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_3px_rgba(239,68,68,0.5)] cursor-pointer flex-shrink-0"
+                    onClick={() => onOpenDailyNote?.(ds)}
+                    title="デイリーノートを作成する"
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="relative grid" style={{gridTemplateColumns:cols,height:`${HOUR_PX*24}px`}}>
@@ -478,10 +577,11 @@ function TimeGridView({ days, events, openCreate, openEdit, notes, onOpenDailyNo
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function Calendar({ notes, onOpenDailyNote, onNavigateToNote, events, onSaveEvents, genres, onSaveGenres }: {
-  notes?: Note[]; onOpenDailyNote?: (dateStr: string) => void; onNavigateToNote?: (noteId: string) => void;
-  events: CalendarEvent[]; onSaveEvents: (evs: CalendarEvent[]) => void; genres: Genre[]; onSaveGenres: (gs: Genre[]) => void;
-}) {
+export default function Calendar({ 
+  notes, onOpenDailyNote, onNavigateToNote, 
+  events, onSaveEvents, onDeleteEvent,
+  genres, onSaveGenres, onDeleteGenre
+}: CalendarProps) {
   const [view, setView] = useState<'month'|'week'|'day'>('month');
   const [anchor, setAnchor] = useState(new Date());
   const [modal, setModal] = useState<{mode:'create'|'edit';data:Partial<CalendarEvent>&{date:string}}|null>(null);
@@ -493,18 +593,9 @@ export default function Calendar({ notes, onOpenDailyNote, onNavigateToNote, eve
   const saveEvents = (evs: CalendarEvent[]) => onSaveEvents(evs);
   const addEvent = (data: Omit<CalendarEvent,'id'>) => { saveEvents([...events,{...data,id:crypto.randomUUID()}]); setModal(null); };
   const updateEvent = (id: string, data: Omit<CalendarEvent,'id'>) => { saveEvents(events.map(e=>e.id===id?{...data,id}:e)); setModal(null); };
-  const deleteEvent = (id: string) => { saveEvents(events.filter(e=>e.id!==id)); setModal(null); };
 
   const handleDeleteRecurrence = (id: string, date: string, choice: 'only' | 'following' | 'all') => {
-    const base = events.find(e => e.id === id); if (!base) return;
-    if (choice === 'all') deleteEvent(id);
-    else if (choice === 'only') {
-      const excluded = base.excludedDates || [];
-      saveEvents(events.map(e => e.id === id ? { ...e, excludedDates: [...excluded, date] } : e));
-    } else if (choice === 'following') {
-      if (base.date === date) deleteEvent(id);
-      else saveEvents(events.map(e => e.id === id ? { ...e, recurrence: e.recurrence ? { ...e.recurrence, endType: 'date', endDate: dayBefore(date) } : undefined } : e));
-    }
+    onDeleteEvent?.(id, date, choice);
     setModal(null); setDeleteTarget(null);
   };
 
@@ -545,9 +636,9 @@ export default function Calendar({ notes, onOpenDailyNote, onNavigateToNote, eve
       {view==='week' && <TimeGridView days={getWeekDays(anchor)} events={filteredEvents} openCreate={openCreate} openEdit={openEdit} notes={notes} onOpenDailyNote={onOpenDailyNote} />}
       {view==='day' && <TimeGridView days={[anchor]} events={filteredEvents} openCreate={openCreate} openEdit={openEdit} notes={notes} onOpenDailyNote={onOpenDailyNote} />}
 
-      {modal && <EventModal initial={modal.data} onSave={data => modal.mode==='create' ? addEvent(data) : updateEvent((modal.data as CalendarEvent).id, data)} onDelete={() => { const d = modal.data as CalendarEvent; if (d.recurrence) setDeleteTarget({id: d.id, date: d.date}); else deleteEvent(d.id); }} onClose={() => setModal(null)} notes={notes} onNavigateToNote={onNavigateToNote} genres={genres} onOpenGenreManager={() => setShowGenreManager(true)} />}
+      {modal && <EventModal initial={modal.data} onSave={data => modal.mode==='create' ? addEvent(data) : updateEvent((modal.data as CalendarEvent).id, data)} onDelete={() => { const d = modal.data as CalendarEvent; if (d.recurrence) setDeleteTarget({id: d.id, date: d.date}); else onDeleteEvent?.(d.id); }} onClose={() => setModal(null)} notes={notes} onNavigateToNote={onNavigateToNote} genres={genres} onOpenGenreManager={() => setShowGenreManager(true)} />}
       {deleteTarget && <RecurrenceDeleteModal onConfirm={(choice) => handleDeleteRecurrence(deleteTarget.id, deleteTarget.date, choice)} onClose={() => setDeleteTarget(null)} />}
-      {showGenreManager && <GenreManager genres={genres} onSave={onSaveGenres} onClose={() => setShowGenreManager(false)} />}
+      {showGenreManager && <GenreManager genres={genres} onSave={onSaveGenres} onDelete={onDeleteGenre} onClose={() => setShowGenreManager(false)} />}
     </div>
   );
 }

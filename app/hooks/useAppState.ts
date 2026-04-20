@@ -46,6 +46,9 @@ export function useAppState() {
   // ── デザインテーマ ──────────────────────────────────────────────────────────
   const [theme, setTheme] = useState<'dark' | 'light' | 'nord' | 'sepia'>('dark');
 
+  // ── 同期強化: 削除済みIDの追跡 ──────────────────────────────────────────────
+  const [pendingDeletions, setPendingDeletions] = useState<string[]>([]);
+
   // リサイズマウスイベント
   useEffect(() => {
     if (!isResizing) return;
@@ -76,39 +79,49 @@ export function useAppState() {
     // データの取得
     const { remoteNotes, remoteEvents, remoteGenres } = await fetchAllFromSupabase(currentUser.id);
 
+    // 削除待機中のIDをセットにする（検索用）
+    const deletedSet = new Set(pendingDeletions);
+
     setNotes(current => {
-      const merged = [...current];
-      remoteNotes.forEach(rn => {
+      // リモートから降ってきたデータのうち、削除待機中のものは除外する
+      const filteredRemote = remoteNotes.filter(rn => !deletedSet.has(rn.id));
+      const merged = [...current.filter(n => !deletedSet.has(n.id))];
+
+      filteredRemote.forEach(rn => {
         const idx = merged.findIndex(n => n.id === rn.id);
         if (idx === -1) merged.push(rn);
         else if (rn.updatedAt > merged[idx].updatedAt) merged[idx] = rn;
       });
-      // 逆にローカルに新しくてリモートにないものをプッシュ
-      const toPush = merged.filter(n => !remoteNotes.find(rn => rn.id === n.id) || n.updatedAt > (remoteNotes.find(rn => rn.id === n.id)?.updatedAt || 0));
+      // ローカルにあってリモートにない、またはローカルの方が新しいものをプッシュ
+      const toPush = merged.filter(n => !filteredRemote.find(rn => rn.id === n.id) || n.updatedAt > (filteredRemote.find(rn => rn.id === n.id)?.updatedAt || 0));
       if (toPush.length > 0) supabase.from('notes').upsert(toPush.map(n => ({ ...n, user_id: currentUser.id }))).then();
       return merged;
     });
 
     setCalendarEvents(current => {
-      const merged = [...current];
-      remoteEvents.forEach(re => {
+      const filteredRemote = remoteEvents.filter(re => !deletedSet.has(re.id));
+      const merged = [...current.filter(e => !deletedSet.has(e.id))];
+
+      filteredRemote.forEach(re => {
         const idx = merged.findIndex(e => e.id === re.id);
         if (idx === -1) merged.push(re);
         else if (re.updatedAt > merged[idx].updatedAt) merged[idx] = re;
       });
-      const toPush = merged.filter(e => !remoteEvents.find(re => re.id === e.id) || e.updatedAt > (remoteEvents.find(re => re.id === e.id)?.updatedAt || 0));
+      const toPush = merged.filter(e => !filteredRemote.find(re => re.id === e.id) || e.updatedAt > (filteredRemote.find(re => re.id === e.id)?.updatedAt || 0));
       if (toPush.length > 0) supabase.from('calendar_events').upsert(toPush.map(e => ({ ...e, user_id: currentUser.id }))).then();
       return merged;
     });
 
     setGenres(current => {
-      const merged = [...current];
-      remoteGenres.forEach(rg => {
+      const filteredRemote = remoteGenres.filter(rg => !deletedSet.has(rg.id));
+      const merged = [...current.filter(g => !deletedSet.has(g.id))];
+
+      filteredRemote.forEach(rg => {
         const idx = merged.findIndex(g => g.id === rg.id);
         if (idx === -1) merged.push(rg);
         else if (rg.updatedAt > merged[idx].updatedAt) merged[idx] = rg;
       });
-      const toPush = merged.filter(g => !remoteGenres.find(rg => rg.id === g.id) || g.updatedAt > (remoteGenres.find(rg => rg.id === g.id)?.updatedAt || 0));
+      const toPush = merged.filter(g => !filteredRemote.find(rg => rg.id === g.id) || g.updatedAt > (filteredRemote.find(rg => rg.id === g.id)?.updatedAt || 0));
       if (toPush.length > 0) supabase.from('genres').upsert(toPush.map(g => ({ ...g, user_id: currentUser.id }))).then();
       return merged;
     });
@@ -197,6 +210,30 @@ export function useAppState() {
     };
   }, [user]);
 
+  // ── 削除クリーナー（バックグラウンドで削除リトライ） ─────────────────────────
+  useEffect(() => {
+    if (!user || pendingDeletions.length === 0) return;
+
+    const cleanup = async () => {
+      const ids = [...pendingDeletions];
+      // Supabaseの全テーブルに対して一括削除を試みる
+      const results = await Promise.all([
+        supabase.from('notes').delete().in('id', ids),
+        supabase.from('calendar_events').delete().in('id', ids),
+        supabase.from('genres').delete().in('id', ids),
+      ]);
+
+      const hasError = results.some(r => r.error);
+      if (!hasError) {
+        // 全テーブルで成功（または対象なし）した場合はリストをクリア
+        setPendingDeletions([]);
+      }
+    };
+
+    const timer = setTimeout(cleanup, 3000); // 3秒おきにチェック
+    return () => clearTimeout(timer);
+  }, [user, pendingDeletions]);
+
   // ── localStorage 初期ロード ─────────────────────────────────────────────────
   useEffect(() => {
     try {
@@ -206,6 +243,7 @@ export function useAppState() {
       const savedEvents = localStorage.getItem('nemo-calendar-events');
       const savedGenres = localStorage.getItem('nemo-calendar-genres');
       const savedTheme  = localStorage.getItem('hybrid-memo-theme');
+      const savedDeletes = localStorage.getItem('nemo-pending-deletes');
 
       if (savedNotes) setNotes(JSON.parse(savedNotes));
       if (savedTabs) {
@@ -216,6 +254,7 @@ export function useAppState() {
       if (savedWidth) setSidebarWidth(parseInt(savedWidth, 10));
       if (savedEvents) setCalendarEvents(JSON.parse(savedEvents));
       if (savedTheme) setTheme(savedTheme as any);
+      if (savedDeletes) setPendingDeletions(JSON.parse(savedDeletes));
 
       if (savedGenres) {
         setGenres(JSON.parse(savedGenres));
@@ -242,7 +281,8 @@ export function useAppState() {
     localStorage.setItem('hybrid-memo-tabs', JSON.stringify({ openedTabs, activeTabId }));
     localStorage.setItem('hybrid-memo-sidebar-width', sidebarWidth.toString());
     localStorage.setItem('hybrid-memo-theme', theme);
-  }, [notes, isLoaded, openedTabs, activeTabId, sidebarWidth, theme]);
+    localStorage.setItem('nemo-pending-deletes', JSON.stringify(pendingDeletions));
+  }, [notes, isLoaded, openedTabs, activeTabId, sidebarWidth, theme, pendingDeletions]);
 
   // カレンダーイベントを独立したエフェクトで保存（ノートと同期）
   useEffect(() => {
@@ -368,7 +408,10 @@ export function useAppState() {
     }
 
     setNotes(prev => prev.filter(n => !idsToDelete.has(n.id)));
-    if (user) await supabase.from('notes').delete().in('id', Array.from(idsToDelete));
+    
+    const idArray = Array.from(idsToDelete);
+    setPendingDeletions(prev => [...new Set([...prev, ...idArray])]);
+    if (user) await supabase.from('notes').delete().in('id', idArray);
 
     let shouldGoHome = false;
     setOpenedTabs(prev => {
@@ -456,14 +499,40 @@ export function useAppState() {
     openedTabs, activeTabId,
     draggedNodeId, setDraggedNodeId,
     sidebarWidth, isResizing, setIsResizing,
-    calendarEvents, setCalendarEvents: async (events: CalendarEvent[]) => {
+    calendarEvents,
+    setCalendarEvents: async (events: CalendarEvent[]) => {
+      // 注意: この関数は更新のみを扱うように整理
       setCalendarEvents(events);
       if (user) await supabase.from('calendar_events').upsert(events.map(e => ({ ...e, user_id: user.id })));
+    },
+    handleDeleteEvent: async (id: string, date?: string, mode: 'only' | 'following' | 'all' = 'all') => {
+      const target = calendarEvents.find(e => e.id === id);
+      if (!target) return;
+
+      if (mode === 'all') {
+        setCalendarEvents(prev => prev.filter(e => e.id !== id));
+        setPendingDeletions(prev => [...new Set([...prev, id])]);
+        if (user) await supabase.from('calendar_events').delete().eq('id', id);
+      } else if (mode === 'only' && date) {
+        const excluded = target.excludedDates || [];
+        const updated = { ...target, excludedDates: [...excluded, date], updatedAt: Date.now() };
+        setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
+        if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
+      } else if (mode === 'following' && date) {
+        const updated = { ...target, recurrence: target.recurrence ? { ...target.recurrence, endType: 'date', endDate: date } : undefined, updatedAt: Date.now() };
+        setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
+        if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
+      }
     },
     genres,
     setGenres: async (newGenres: Genre[]) => {
       setGenres(newGenres);
       if (user) await supabase.from('genres').upsert(newGenres.map(g => ({ ...g, user_id: user.id })));
+    },
+    handleDeleteGenre: async (id: string) => {
+      setGenres(prev => prev.filter(g => g.id !== id));
+      setPendingDeletions(prev => [...new Set([...prev, id])]);
+      if (user) await supabase.from('genres').delete().eq('id', id);
     },
     theme, setTheme,
     handleLogout,
