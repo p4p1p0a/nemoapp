@@ -272,7 +272,7 @@ function RecurrenceModal({ initial, baseDate, onApply, onClose }: {
   );
 }
 
-function GenreManager({ genres, onSave, onClose }: { genres: Genre[]; onSave: (gs: Genre[]) => void; onClose: () => void; }) {
+function GenreManager({ genres, onSave, onDelete, onClose }: { genres: Genre[]; onSave: (gs: Genre[]) => void; onDelete?: (id: string) => void; onClose: () => void; }) {
   const [list, setList] = useState<Genre[]>(genres);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');

@@ -519,7 +519,15 @@ export function useAppState() {
         setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
         if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
       } else if (mode === 'following' && date) {
-        const updated = { ...target, recurrence: target.recurrence ? { ...target.recurrence, endType: 'date', endDate: date } : undefined, updatedAt: Date.now() };
+        const updated = { 
+          ...target, 
+          recurrence: target.recurrence ? { 
+            ...target.recurrence, 
+            endType: 'date' as const, 
+            endDate: date 
+          } : undefined, 
+          updatedAt: Date.now() 
+        };
         setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
         if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
       }
