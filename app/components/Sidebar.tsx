@@ -5,7 +5,6 @@ import { SidebarNode } from "./SidebarNode";
 
 interface SidebarProps {
   notes: Note[];
-  setNotes: React.Dispatch<React.SetStateAction<Note[]>>;
   activeTabId: string | null;
   activateNote: (id: string | null, title?: string) => void;
   draggedNodeId: string | null;
@@ -16,12 +15,14 @@ interface SidebarProps {
   setIsResizing: (v: boolean) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
-  handleCreateNewNote: (type: "document" | "board") => void;
+  handleCreateNewNote: (type: "document" | "board", parentId?: string | null) => void;
+  handleDeleteNote: (id: string, e: React.MouseEvent) => void;
+  handleRenameNote: (id: string, title: string) => void;
+  handleMoveNote: (id: string, parentId: string | null) => void;
 }
 
 export const Sidebar = ({
   notes,
-  setNotes,
   activeTabId,
   activateNote,
   draggedNodeId,
@@ -33,6 +34,9 @@ export const Sidebar = ({
   searchQuery,
   setSearchQuery,
   handleCreateNewNote,
+  handleDeleteNote,
+  handleRenameNote,
+  handleMoveNote,
 }: SidebarProps) => {
   const rootNotes = notes.filter(n => n.parentId === null);
 
@@ -45,11 +49,7 @@ export const Sidebar = ({
         e.preventDefault();
         if (draggedNodeId) {
           // ルート（親なし）へのドロップ
-          setNotes(prev =>
-            prev.map(n =>
-              n.id === draggedNodeId ? { ...n, parentId: null, updatedAt: Date.now() } : n
-            )
-          );
+          handleMoveNote(draggedNodeId, null);
           setDraggedNodeId(null);
         }
       }}
@@ -149,20 +149,11 @@ export const Sidebar = ({
                 activateNote={activateNote}
                 draggedNodeId={draggedNodeId}
                 setDraggedNodeId={setDraggedNodeId}
-                setNotes={setNotes}
                 isDescendant={isDescendant}
-                onCreateChild={(parentId, type) => {
-                  const newNote = {
-                    id: crypto.randomUUID(),
-                    title: type === 'board' ? '無題のボード' : '無題のノート',
-                    content: type === 'board' ? JSON.stringify({ strokes: [], nodes: [], edges: [] }) : '',
-                    parentId,
-                    updatedAt: Date.now(),
-                    type,
-                  };
-                  setNotes(prev => [...prev, newNote]);
-                  activateNote(newNote.id, newNote.title);
-                }}
+                onDelete={handleDeleteNote}
+                onRename={handleRenameNote}
+                onMove={handleMoveNote}
+                onCreateChild={(parentId, type) => handleCreateNewNote(type, parentId)}
               />
             ))}
             {rootNotes.length === 0 && (

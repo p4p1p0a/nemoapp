@@ -361,35 +361,38 @@ export function useAppState() {
   };
 
   // ── 新規ノート作成 ──────────────────────────────────────────────────────────
-  const handleCreateNewNote = async (type: 'document' | 'board' = 'document') => {
+  const handleCreateNewNote = async (type: 'document' | 'board' = 'document', parentId?: string | null) => {
+    const actualParentId = parentId !== undefined ? parentId : (activeTabId && activeTabId !== '__calendar__' ? activeTabId : null);
     const newNote: Note = {
       id: crypto.randomUUID(),
       title:   type === 'board' ? '無題のボード' : '無題のノート',
       content: type === 'board' ? JSON.stringify({ strokes: [], nodes: [], edges: [] }) : '',
-      parentId: activeTabId && activeTabId !== '__calendar__' ? activeTabId : null,
+      parentId: actualParentId,
       updatedAt: Date.now(),
       type,
     };
     setNotes(prev => [...prev, newNote]);
     if (user) await supabase.from('notes').upsert({ ...newNote, user_id: user.id });
     activateNote(newNote.id, newNote.title);
+    return newNote;
   };
 
   // ── タイトル / コンテンツ更新 ───────────────────────────────────────────────
-  const handleUpdateTitle = async (title: string) => {
-    const note = notes.find(n => n.id === activeTabId);
+  const handleUpdateTitle = async (id: string, title: string) => {
+    const note = notes.find(n => n.id === id);
     if (!note) return;
     const updated = { ...note, title, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => (n.id === activeTabId ? updated : n)));
-    setOpenedTabs(prev => prev.map(t => (t.id === activeTabId ? { ...t, title: title || '無題' } : t)));
+    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
+    // タブのタイトルも更新
+    setOpenedTabs(prev => prev.map(t => (t.id === id ? { ...t, title: title || '無題' } : t)));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
-  const handleUpdateContent = async (content: string) => {
-    const note = notes.find(n => n.id === activeTabId);
+  const handleUpdateContent = async (id: string, content: string) => {
+    const note = notes.find(n => n.id === id);
     if (!note) return;
     const updated = { ...note, content, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => (n.id === activeTabId ? updated : n)));
+    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
@@ -397,6 +400,14 @@ export function useAppState() {
     const note = notes.find(n => n.id === id);
     if (!note) return;
     const updated = { ...note, color, updatedAt: Date.now() };
+    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
+    if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
+  };
+
+  const handleMoveNote = async (id: string, newParentId: string | null) => {
+    const note = notes.find(n => n.id === id);
+    if (!note) return;
+    const updated = { ...note, parentId: newParentId, updatedAt: Date.now() };
     setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
@@ -557,7 +568,7 @@ export function useAppState() {
     activateNote, closeTab,
     handleDailySave, handleCreateNewNote,
     handleUpdateTitle, handleUpdateContent, handleDeleteNote,
-    updateNoteColor,
+    handleMoveNote, updateNoteColor,
     isDescendant,
     openOrCreateDailyNote,
     // computed

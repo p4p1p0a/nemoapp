@@ -19,7 +19,7 @@ export default function Home() {
     draggedNodeId, setDraggedNodeId,
     sidebarWidth, isResizing, setIsResizing,
     activateNote, closeTab,
-    handleCreateNewNote, handleUpdateTitle, handleUpdateContent, handleDeleteNote,
+    handleCreateNewNote, handleUpdateTitle, handleUpdateContent, handleDeleteNote, handleMoveNote,
     isDescendant,
     openOrCreateDailyNote,
     todayTitle, hasWrittenToday, shouldShowDailyEditor,
@@ -109,7 +109,6 @@ export default function Home() {
       {activePanel === "files" && (
         <Sidebar
           notes={notes}
-          setNotes={setNotes}
           activeTabId={activeTabId}
           activateNote={activateNote}
           draggedNodeId={draggedNodeId}
@@ -121,6 +120,9 @@ export default function Home() {
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           handleCreateNewNote={handleCreateNewNote}
+          handleDeleteNote={handleDeleteNote}
+          handleRenameNote={handleUpdateTitle}
+          handleMoveNote={handleMoveNote}
         />
       )}
 
@@ -192,7 +194,7 @@ export default function Home() {
                 type="text"
                 className="bg-transparent border-none text-xl font-bold tracking-tight outline-none text-white placeholder:text-white/20 text-right w-[150px] focus:w-[250px] transition-all"
                 defaultValue={activeNote.title}
-                onChange={e => handleUpdateTitle(e.target.value)}
+                onChange={e => handleUpdateTitle(activeNote.id, e.target.value)}
                 placeholder="無題のボード"
               />
               <div className="w-[1px] h-4 bg-white/20 mx-3" />
@@ -207,7 +209,7 @@ export default function Home() {
             <InfiniteBoard
               key={`board-${activeNote.id}`}
               content={activeNote.content}
-              updateContent={handleUpdateContent}
+              updateContent={(content) => handleUpdateContent(activeNote.id, content)}
               notes={notes}
               activateNote={activateNote}
             />
@@ -238,8 +240,8 @@ export default function Home() {
                 notes={notes}
                 childNotes={childNotes}
                 activateNote={activateNote}
-                handleUpdateTitle={handleUpdateTitle}
-                handleUpdateContent={handleUpdateContent}
+                handleUpdateTitle={(title) => handleUpdateTitle(activeNote.id, title)}
+                handleUpdateContent={(content) => handleUpdateContent(activeNote.id, content)}
                 handleDeleteNote={handleDeleteNote}
               />
             ) : (

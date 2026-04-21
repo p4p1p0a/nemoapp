@@ -11,9 +11,10 @@ interface SidebarNodeProps {
   activateNote: (id: string | null, title?: string) => void;
   draggedNodeId: string | null;
   setDraggedNodeId: (id: string | null) => void;
-  setNotes: React.Dispatch<React.SetStateAction<Note[]>>;
   isDescendant: (nodeId: string, targetId: string) => boolean;
   onDelete?: (id: string, e: React.MouseEvent) => void;
+  onRename?: (id: string, title: string) => void;
+  onMove?: (id: string, parentId: string | null) => void;
   onCreateChild?: (parentId: string, type: 'document' | 'board') => void;
 }
 
@@ -88,9 +89,10 @@ export const SidebarNode = ({
   activateNote,
   draggedNodeId,
   setDraggedNodeId,
-  setNotes,
   isDescendant,
   onDelete,
+  onRename,
+  onMove,
   onCreateChild,
 }: SidebarNodeProps) => {
   const childrenNodes = notes.filter(n => n.parentId === note.id);
@@ -116,7 +118,7 @@ export const SidebarNode = ({
   const commitRename = () => {
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== note.title) {
-      setNotes(prev => prev.map(n => n.id === note.id ? { ...n, title: trimmed, updatedAt: Date.now() } : n));
+      onRename?.(note.id, trimmed);
     }
     setIsRenaming(false);
   };
@@ -146,9 +148,7 @@ export const SidebarNode = ({
     setIsDragOver(false);
     if (!draggedNodeId) return;
     if (draggedNodeId === note.id || isDescendant(draggedNodeId, note.id)) return;
-    setNotes(prev =>
-      prev.map(n => n.id === draggedNodeId ? { ...n, parentId: note.id, updatedAt: Date.now() } : n)
-    );
+    onMove?.(draggedNodeId, note.id);
     setDraggedNodeId(null);
   };
 
@@ -161,17 +161,7 @@ export const SidebarNode = ({
           note={note}
           onClose={() => setCtxMenu(null)}
           onRename={() => { setRenameValue(note.title); setIsRenaming(true); }}
-          onDelete={() => {
-            if (!confirm('このノートを削除しますか？子ノートも全て削除されます。')) return;
-            // 再帰的に削除
-            const idsToDelete = new Set<string>([note.id]);
-            const queue = [note.id];
-            while (queue.length > 0) {
-              const cur = queue.pop()!;
-              notes.filter(n => n.parentId === cur).forEach(n => { idsToDelete.add(n.id); queue.push(n.id); });
-            }
-            setNotes(prev => prev.filter(n => !idsToDelete.has(n.id)));
-          }}
+          onDelete={() => onDelete?.(note.id, { stopPropagation: () => {} } as any)}
           onCreateDoc={()   => onCreateChild?.(note.id, 'document')}
           onCreateBoard={() => onCreateChild?.(note.id, 'board')}
         />
@@ -251,9 +241,10 @@ export const SidebarNode = ({
               activateNote={activateNote}
               draggedNodeId={draggedNodeId}
               setDraggedNodeId={setDraggedNodeId}
-              setNotes={setNotes}
               isDescendant={isDescendant}
               onDelete={onDelete}
+              onRename={onRename}
+              onMove={onMove}
               onCreateChild={onCreateChild}
             />
           ))}
