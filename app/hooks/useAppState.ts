@@ -23,6 +23,7 @@ export function useAppState() {
   const [dailyColor, setDailyColor] = useState('#3b82f6');
   const [isLoaded, setIsLoaded] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   // ── UI ─────────────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
@@ -225,17 +226,23 @@ export function useAppState() {
 
     const cleanup = async () => {
       const ids = [...pendingDeletions];
-      // Supabaseの全テーブルに対して一括削除を試みる
-      const results = await Promise.all([
-        supabase.from('notes').delete().in('id', ids),
-        supabase.from('calendar_events').delete().in('id', ids),
-        supabase.from('genres').delete().in('id', ids),
-      ]);
+      try {
+        const results = await Promise.all([
+          supabase.from('notes').delete().in('id', ids),
+          supabase.from('calendar_events').delete().in('id', ids),
+          supabase.from('genres').delete().in('id', ids),
+        ]);
 
-      const hasError = results.some(r => r.error);
-      if (!hasError) {
-        // 削除に成功したIDのみをリストから除外する
-        setPendingDeletions(prev => prev.filter(id => !ids.includes(id)));
+        const error = results.find(r => r.error)?.error;
+        if (error) {
+          setLastError(`Delete error: ${error.message}`);
+        } else {
+          setLastError(null);
+          // 削除に成功したIDのみをリストから除外する
+          setPendingDeletions(prev => prev.filter(id => !ids.includes(id)));
+        }
+      } catch (e: any) {
+        setLastError(`Sync failed: ${e.message}`);
       }
     };
 
@@ -430,8 +437,14 @@ export function useAppState() {
     setNotes(prev => prev.filter(n => !idsToDelete.has(n.id)));
     
     const idArray = Array.from(idsToDelete);
+    // Synchonous Ref Update (No race condition)
+    idArray.forEach(id => deletionsRef.current.add(id));
     setPendingDeletions(prev => [...new Set([...prev, ...idArray])]);
-    if (user) await supabase.from('notes').delete().in('id', idArray);
+    
+    if (user) {
+      const { error } = await supabase.from('notes').delete().in('id', idArray);
+      if (error) setLastError(`Delete note error: ${error.message}`);
+    }
 
     let shouldGoHome = false;
     setOpenedTabs(prev => {
@@ -513,13 +526,14 @@ export function useAppState() {
     notes, setNotes,
     dailyContent, setDailyContent,
     dailyColor, setDailyColor,
-    isLoaded, user,
+    isLoaded, user, lastError,
     searchQuery, setSearchQuery,
     activePanel, setActivePanel,
     openedTabs, activeTabId,
     draggedNodeId, setDraggedNodeId,
     sidebarWidth, isResizing, setIsResizing,
     calendarEvents,
+    pendingDeletions,
     setCalendarEvents: async (events: CalendarEvent[]) => {
       // 注意: この関数は更新のみを扱うように整理
       setCalendarEvents(events);
@@ -531,8 +545,12 @@ export function useAppState() {
 
       if (mode === 'all') {
         setCalendarEvents(prev => prev.filter(e => e.id !== id));
+        deletionsRef.current.add(id);
         setPendingDeletions(prev => [...new Set([...prev, id])]);
-        if (user) await supabase.from('calendar_events').delete().eq('id', id);
+        if (user) {
+          const { error } = await supabase.from('calendar_events').delete().eq('id', id);
+          if (error) setLastError(`Delete event error: ${error.message}`);
+        }
       } else if (mode === 'only' && date) {
         const excluded = target.excludedDates || [];
         const updated = { ...target, excludedDates: [...excluded, date], updatedAt: Date.now() };
@@ -559,8 +577,12 @@ export function useAppState() {
     },
     handleDeleteGenre: async (id: string) => {
       setGenres(prev => prev.filter(g => g.id !== id));
+      deletionsRef.current.add(id);
       setPendingDeletions(prev => [...new Set([...prev, id])]);
-      if (user) await supabase.from('genres').delete().eq('id', id);
+      if (user) {
+        const { error } = await supabase.from('genres').delete().eq('id', id);
+        if (error) setLastError(`Delete genre error: ${error.message}`);
+      }
     },
     theme, setTheme,
     handleLogout,
