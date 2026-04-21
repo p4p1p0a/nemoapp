@@ -47,15 +47,6 @@ export function useAppState() {
   // ── デザインテーマ ──────────────────────────────────────────────────────────
   const [theme, setTheme] = useState<'dark' | 'light' | 'nord' | 'sepia'>('dark');
 
-  // ── 同期強化: 削除済みIDの追跡 ──────────────────────────────────────────────
-  const [pendingDeletions, setPendingDeletions] = useState<string[]>([]);
-  const deletionsRef = useRef<Set<string>>(new Set());
-
-  // pendingDeletions（ステート）が変わったら Ref も更新して最新値を維持
-  useEffect(() => {
-    deletionsRef.current = new Set(pendingDeletions);
-  }, [pendingDeletions]);
-
   // リサイズマウスイベント
   useEffect(() => {
     if (!isResizing) return;
@@ -86,49 +77,54 @@ export function useAppState() {
     // データの取得
     const { remoteNotes, remoteEvents, remoteGenres } = await fetchAllFromSupabase(currentUser.id);
 
-    // 削除待機中のIDをセットにする（検索用）
-    const deletedSet = deletionsRef.current;
-
     setNotes(current => {
-      // リモートから降ってきたデータのうち、削除待機中のものは除外する
-      const filteredRemote = remoteNotes.filter(rn => !deletedSet.has(rn.id));
-      const merged = [...current.filter(n => !deletedSet.has(n.id))];
+      const merged = [...current];
 
-      filteredRemote.forEach(rn => {
+      remoteNotes.forEach(rn => {
         const idx = merged.findIndex(n => n.id === rn.id);
         if (idx === -1) merged.push(rn);
         else if (rn.updatedAt > merged[idx].updatedAt) merged[idx] = rn;
       });
-      // ローカルにあってリモートにない、またはローカルの方が新しいものをプッシュ
-      const toPush = merged.filter(n => !filteredRemote.find(rn => rn.id === n.id) || n.updatedAt > (filteredRemote.find(rn => rn.id === n.id)?.updatedAt || 0));
+
+      // 同期が必要な項目をプッシュ
+      const toPush = merged.filter(n => {
+        const rn = remoteNotes.find(r => r.id === n.id);
+        return !rn || n.updatedAt > (rn.updatedAt || 0);
+      });
       if (toPush.length > 0) supabase.from('notes').upsert(toPush.map(n => ({ ...n, user_id: currentUser.id }))).then();
       return merged;
     });
 
     setCalendarEvents(current => {
-      const filteredRemote = remoteEvents.filter(re => !deletedSet.has(re.id));
-      const merged = [...current.filter(e => !deletedSet.has(e.id))];
+      const merged = [...current];
 
-      filteredRemote.forEach(re => {
+      remoteEvents.forEach(re => {
         const idx = merged.findIndex(e => e.id === re.id);
         if (idx === -1) merged.push(re);
         else if (re.updatedAt > merged[idx].updatedAt) merged[idx] = re;
       });
-      const toPush = merged.filter(e => !filteredRemote.find(re => re.id === e.id) || e.updatedAt > (filteredRemote.find(re => re.id === e.id)?.updatedAt || 0));
+
+      const toPush = merged.filter(e => {
+        const re = remoteEvents.find(r => r.id === e.id);
+        return !re || e.updatedAt > (re.updatedAt || 0);
+      });
       if (toPush.length > 0) supabase.from('calendar_events').upsert(toPush.map(e => ({ ...e, user_id: currentUser.id }))).then();
       return merged;
     });
 
     setGenres(current => {
-      const filteredRemote = remoteGenres.filter(rg => !deletedSet.has(rg.id));
-      const merged = [...current.filter(g => !deletedSet.has(g.id))];
+      const merged = [...current];
 
-      filteredRemote.forEach(rg => {
+      remoteGenres.forEach(rg => {
         const idx = merged.findIndex(g => g.id === rg.id);
         if (idx === -1) merged.push(rg);
         else if (rg.updatedAt > merged[idx].updatedAt) merged[idx] = rg;
       });
-      const toPush = merged.filter(g => !filteredRemote.find(rg => rg.id === g.id) || g.updatedAt > (filteredRemote.find(rg => rg.id === g.id)?.updatedAt || 0));
+
+      const toPush = merged.filter(g => {
+        const rg = remoteGenres.find(r => r.id === g.id);
+        return !rg || g.updatedAt > (rg.updatedAt || 0);
+      });
       if (toPush.length > 0) supabase.from('genres').upsert(toPush.map(g => ({ ...g, user_id: currentUser.id }))).then();
       return merged;
     });
@@ -158,7 +154,6 @@ export function useAppState() {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as Note;
           setNotes(current => {
-            if (deletionsRef.current.has(newData.id)) return current; // 削除中なら無視
             const idx = current.findIndex(n => n.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
@@ -168,9 +163,6 @@ export function useAppState() {
             }
             return current;
           });
-        } else if (payload.eventType === 'DELETE') {
-          const oldId = (payload.old as any).id;
-          setNotes(current => current.filter(n => n.id !== oldId));
         }
       })
       // カレンダーイベントの監視
@@ -178,7 +170,6 @@ export function useAppState() {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as CalendarEvent;
           setCalendarEvents(current => {
-            if (deletionsRef.current.has(newData.id)) return current;
             const idx = current.findIndex(e => e.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
@@ -188,9 +179,6 @@ export function useAppState() {
             }
             return current;
           });
-        } else if (payload.eventType === 'DELETE') {
-          const oldId = (payload.old as any).id;
-          setCalendarEvents(current => current.filter(e => e.id !== oldId));
         }
       })
       // ジャンルの監視
@@ -198,7 +186,6 @@ export function useAppState() {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as Genre;
           setGenres(current => {
-            if (deletionsRef.current.has(newData.id)) return current;
             const idx = current.findIndex(g => g.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
@@ -208,9 +195,6 @@ export function useAppState() {
             }
             return current;
           });
-        } else if (payload.eventType === 'DELETE') {
-          const oldId = (payload.old as any).id;
-          setGenres(current => current.filter(g => g.id !== oldId));
         }
       })
       .subscribe();
@@ -220,35 +204,7 @@ export function useAppState() {
     };
   }, [user]);
 
-  // ── 削除クリーナー（バックグラウンドで削除リトライ） ─────────────────────────
-  useEffect(() => {
-    if (!user || pendingDeletions.length === 0) return;
-
-    const cleanup = async () => {
-      const ids = [...pendingDeletions];
-      try {
-        const results = await Promise.all([
-          supabase.from('notes').delete().in('id', ids),
-          supabase.from('calendar_events').delete().in('id', ids),
-          supabase.from('genres').delete().in('id', ids),
-        ]);
-
-        const error = results.find(r => r.error)?.error;
-        if (error) {
-          setLastError(`Delete error: ${error.message}`);
-        } else {
-          setLastError(null);
-          // 削除に成功したIDのみをリストから除外する
-          setPendingDeletions(prev => prev.filter(id => !ids.includes(id)));
-        }
-      } catch (e: any) {
-        setLastError(`Sync failed: ${e.message}`);
-      }
-    };
-
-    const timer = setTimeout(cleanup, 3000); // 3秒おきにチェック
-    return () => clearTimeout(timer);
-  }, [user, pendingDeletions]);
+  // ── 削除クリーナー（不要になったため削除） ──────────────────────────────────
 
   // ── localStorage 初期ロード ─────────────────────────────────────────────────
   useEffect(() => {
@@ -259,7 +215,6 @@ export function useAppState() {
       const savedEvents = localStorage.getItem('nemo-calendar-events');
       const savedGenres = localStorage.getItem('nemo-calendar-genres');
       const savedTheme  = localStorage.getItem('hybrid-memo-theme');
-      const savedDeletes = localStorage.getItem('nemo-pending-deletes');
 
       if (savedNotes) setNotes(JSON.parse(savedNotes));
       if (savedTabs) {
@@ -270,7 +225,6 @@ export function useAppState() {
       if (savedWidth) setSidebarWidth(parseInt(savedWidth, 10));
       if (savedEvents) setCalendarEvents(JSON.parse(savedEvents));
       if (savedTheme) setTheme(savedTheme as any);
-      if (savedDeletes) setPendingDeletions(JSON.parse(savedDeletes));
 
       if (savedGenres) {
         setGenres(JSON.parse(savedGenres));
@@ -297,8 +251,7 @@ export function useAppState() {
     localStorage.setItem('hybrid-memo-tabs', JSON.stringify({ openedTabs, activeTabId }));
     localStorage.setItem('hybrid-memo-sidebar-width', sidebarWidth.toString());
     localStorage.setItem('hybrid-memo-theme', theme);
-    localStorage.setItem('nemo-pending-deletes', JSON.stringify(pendingDeletions));
-  }, [notes, isLoaded, openedTabs, activeTabId, sidebarWidth, theme, pendingDeletions]);
+  }, [notes, isLoaded, openedTabs, activeTabId, sidebarWidth, theme]);
 
   // カレンダーイベントを独立したエフェクトで保存（ノートと同期）
   useEffect(() => {
@@ -434,15 +387,17 @@ export function useAppState() {
       });
     }
 
-    setNotes(prev => prev.filter(n => !idsToDelete.has(n.id)));
-    
     const idArray = Array.from(idsToDelete);
-    // Synchonous Ref Update (No race condition)
-    idArray.forEach(id => deletionsRef.current.add(id));
-    setPendingDeletions(prev => [...new Set([...prev, ...idArray])]);
+    const now = Date.now();
+    
+    setNotes(prev => prev.map(n => idsToDelete.has(n.id) ? { ...n, is_deleted: true, updatedAt: now } : n));
     
     if (user) {
-      const { error } = await supabase.from('notes').delete().in('id', idArray);
+      const updates = idArray.map(id => {
+        const note = notes.find(n => n.id === id);
+        return { ...note, id, is_deleted: true, updatedAt: now, user_id: user.id };
+      });
+      const { error } = await supabase.from('notes').upsert(updates);
       if (error) setLastError(`Delete note error: ${error.message}`);
     }
 
@@ -523,7 +478,8 @@ export function useAppState() {
 
   return {
     // state
-    notes, setNotes,
+    notes: notes.filter(n => !n.is_deleted), 
+    setNotes,
     dailyContent, setDailyContent,
     dailyColor, setDailyColor,
     isLoaded, user, lastError,
@@ -532,8 +488,8 @@ export function useAppState() {
     openedTabs, activeTabId,
     draggedNodeId, setDraggedNodeId,
     sidebarWidth, isResizing, setIsResizing,
-    calendarEvents,
-    pendingDeletions,
+    calendarEvents: calendarEvents.filter(e => !e.is_deleted),
+    genres: genres.filter(g => !g.is_deleted),
     setCalendarEvents: async (events: CalendarEvent[]) => {
       // 注意: この関数は更新のみを扱うように整理
       setCalendarEvents(events);
@@ -543,12 +499,12 @@ export function useAppState() {
       const target = calendarEvents.find(e => e.id === id);
       if (!target) return;
 
+      const now = Date.now();
       if (mode === 'all') {
-        setCalendarEvents(prev => prev.filter(e => e.id !== id));
-        deletionsRef.current.add(id);
-        setPendingDeletions(prev => [...new Set([...prev, id])]);
+        const updated = { ...target, is_deleted: true, updatedAt: now };
+        setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
         if (user) {
-          const { error } = await supabase.from('calendar_events').delete().eq('id', id);
+          const { error } = await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
           if (error) setLastError(`Delete event error: ${error.message}`);
         }
       } else if (mode === 'only' && date) {
@@ -570,17 +526,16 @@ export function useAppState() {
         if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
       }
     },
-    genres,
     setGenres: async (newGenres: Genre[]) => {
       setGenres(newGenres);
       if (user) await supabase.from('genres').upsert(newGenres.map(g => ({ ...g, user_id: user.id })));
     },
     handleDeleteGenre: async (id: string) => {
-      setGenres(prev => prev.filter(g => g.id !== id));
-      deletionsRef.current.add(id);
-      setPendingDeletions(prev => [...new Set([...prev, id])]);
+      const now = Date.now();
+      setGenres(prev => prev.map(g => g.id === id ? { ...g, is_deleted: true, updatedAt: now } : g));
       if (user) {
-        const { error } = await supabase.from('genres').delete().eq('id', id);
+        const target = genres.find(g => g.id === id);
+        const { error } = await supabase.from('genres').upsert({ ...target, id, is_deleted: true, updatedAt: now, user_id: user.id });
         if (error) setLastError(`Delete genre error: ${error.message}`);
       }
     },

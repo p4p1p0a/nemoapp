@@ -29,7 +29,7 @@ export default function Home() {
     theme, setTheme,
     dailyColor, setDailyColor,
     user, handleLogout,
-    lastError, pendingDeletions,
+    lastError,
   } = useAppState();
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -46,26 +46,18 @@ export default function Home() {
         isResizing ? "select-none cursor-col-resize" : ""
       }`}
     >
-      {/* デバッグパネル（一時的） */}
-      <div className="fixed bottom-4 right-4 z-[9999] bg-black/80 backdrop-blur-md border border-white/20 rounded-lg p-3 text-[10px] font-mono text-white/70 flex flex-col gap-1 shadow-2xl pointer-events-none">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="font-bold">SYNC ENGINE STATUS</span>
-        </div>
-        <div className="flex justify-between gap-4 mt-1 border-t border-white/10 pt-1">
-          <span>DELETIONS (PEND):</span>
-          <span className={pendingDeletions.length > 0 ? "text-yellow-400 font-bold" : ""}>{pendingDeletions.length}</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span>NOTES COUNT:</span>
-          <span>{notes.length}</span>
-        </div>
-        {lastError && (
-          <div className="mt-1 text-red-400 border-t border-white/10 pt-1 max-w-[200px] break-words">
-            ERROR: {lastError}
+      {/* 診断パネル（論理削除モード用） */}
+      {lastError && (
+        <div className="fixed bottom-4 right-4 z-[9999] bg-black/80 backdrop-blur-md border border-red-500/50 rounded-lg p-3 text-[10px] font-mono text-red-100 flex flex-col gap-1 shadow-2xl pointer-events-none">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="font-bold">SYNC ERROR</span>
           </div>
-        )}
-      </div>
+          <div className="mt-1 max-w-[200px] break-words">
+            {lastError}
+          </div>
+        </div>
+      )}
 
       {/* ===============================
           アクティビティバー（左端固定の縦型アイコンレール）

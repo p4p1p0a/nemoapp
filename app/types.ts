@@ -5,7 +5,8 @@ export type Note = {
   parentId: string | null;
   updatedAt: number;
   type?: 'document' | 'board' | 'daily';
-  color?: string; // 新規追加: ノートのアクセントカラー
+  color?: string;
+  is_deleted?: boolean;
 };
 
 export type Tab = {
@@ -18,6 +19,7 @@ export type Genre = {
   name: string;
   color: string;
   updatedAt: number;
+  is_deleted?: boolean;
 };
 
 // ── Calendar Types ────────────────────────────────────────────────────────────
@@ -44,6 +46,7 @@ export type CalendarEvent = {
   recurrence?: RecurrenceRule;
   linkedNoteId?: string;
   genreId?: string;
-  excludedDates?: string[]; // 新規追加: キャンセルされた日程 (YYYY-MM-DD)
+  excludedDates?: string[];
   updatedAt: number;
+  is_deleted?: boolean;
 };
