@@ -79,30 +79,19 @@ export function useAppState() {
 
     setNotes(current => {
       const merged = [...current];
-      const remoteIds = new Set(remoteNotes.map(n => n.id));
-      const now = Date.now();
-      // 5分以内に作成されたローカルのみのノートはオフライン作成として保持・プッシュ
-      // それより古いローカルのみのノートは他デバイスで削除されたとみなし除去
-      const OFFLINE_GRACE_MS = 5 * 60 * 1000;
-
       remoteNotes.forEach(rn => {
         const idx = merged.findIndex(n => n.id === rn.id);
         if (idx === -1) merged.push(rn);
         else if (rn.updatedAt > merged[idx].updatedAt) merged[idx] = rn;
       });
 
-      // ローカルのみ且つ古いノートは相手側での削除とみなして除去
-      const filteredMerged = merged.filter(n =>
-        remoteIds.has(n.id) || (now - (n.updatedAt || 0)) < OFFLINE_GRACE_MS
-      );
-
       // 同期が必要な項目をプッシュ
-      const toPush = filteredMerged.filter(n => {
+      const toPush = merged.filter(n => {
         const rn = remoteNotes.find(r => r.id === n.id);
         return !rn || n.updatedAt > (rn.updatedAt || 0);
       });
       if (toPush.length > 0) supabase.from('notes').upsert(toPush.map(n => ({ ...n, user_id: currentUser.id }))).then();
-      return filteredMerged;
+      return merged;
     });
 
     setCalendarEvents(current => {
@@ -416,13 +405,18 @@ export function useAppState() {
     }
 
     const idArray = Array.from(idsToDelete);
+    const now = Date.now();
 
-    // ローカル状態から即削除（ソフトデリート廃止 → ハードデリート）
-    setNotes(prev => prev.filter(n => !idsToDelete.has(n.id)));
+    // ローカル状態を論理削除（is_deleted: true）に更新
+    setNotes(prev => prev.map(n => idsToDelete.has(n.id) ? { ...n, is_deleted: true, updatedAt: now } : n));
 
-    // Supabase から物理削除（他デバイスのリアルタイムDELETEイベントをトリガー）
+    // Supabase に論理削除を反映 (upsert)
     if (user) {
-      const { error } = await supabase.from('notes').delete().in('id', idArray);
+      const updates = idArray.map(id => {
+        const note = notes.find(n => n.id === id);
+        return { ...note, id, is_deleted: true, updatedAt: now, user_id: user.id };
+      });
+      const { error } = await supabase.from('notes').upsert(updates);
       if (error) setLastError(`Delete note error: ${error.message}`);
     }
 
@@ -460,9 +454,9 @@ export function useAppState() {
     : false;
 
   const isCalendarTab = activeTabId === '__calendar__';
-  const activeNote  = activeTabId && !isCalendarTab ? notes.find(n => n.id === activeTabId) ?? null : null;
-  const rootNotes   = notes.filter(n => n.parentId === null);
-  const childNotes  = activeTabId && !isCalendarTab ? notes.filter(n => n.parentId === activeTabId) : [];
+  const activeNote  = activeTabId && !isCalendarTab ? notes.find(n => n.id === activeTabId && !n.is_deleted) ?? null : null;
+  const rootNotes   = notes.filter(n => n.parentId === null && !n.is_deleted);
+  const childNotes  = activeTabId && !isCalendarTab ? notes.filter(n => n.parentId === activeTabId && !n.is_deleted) : [];
 
   // ── デイリーノートを開く or 作成 ────────────────────────────────────────────
   const openOrCreateDailyNote = (dateStr: string) => {
@@ -503,7 +497,7 @@ export function useAppState() {
 
   return {
     // state
-    notes, // ハードデリートに移行済み（is_deleted は使用しない）
+    notes: notes.filter(n => !n.is_deleted),
     setNotes,
     dailyContent, setDailyContent,
     dailyColor, setDailyColor,
