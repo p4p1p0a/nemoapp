@@ -286,6 +286,7 @@ function GenreManager({ genres, onSave, onDelete, onClose }: { genres: Genre[]; 
   const handleDelete = (id: string) => { 
     if (list.length <= 1) return;
     if (confirm('このジャンルを削除しますか？')) {
+      setList(prev => prev.filter(g => g.id !== id));
       onDelete?.(id);
     }
   };
