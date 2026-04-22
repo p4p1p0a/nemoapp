@@ -14,6 +14,7 @@ type SimpleEvent = {
   endTime: string;
   allDay: boolean;
   color: string;
+  is_deleted?: boolean;
 };
 
 // デイリーノートの親チェーンから YYYY-MM-DD を逆引き
@@ -41,7 +42,7 @@ function DailyScheduleBox({ note, notes }: { note: Note; notes: Note[] }) {
   if (!dateStr) return null;
 
   const dayEvents = events
-    .filter(e => e.date === dateStr)
+    .filter(e => e.date === dateStr && !e.is_deleted)
     .sort((a, b) => (a.allDay ? '00:00' : a.startTime).localeCompare(b.allDay ? '00:00' : b.startTime));
 
   return (
