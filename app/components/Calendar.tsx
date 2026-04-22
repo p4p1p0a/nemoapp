@@ -129,11 +129,11 @@ function recLabel(rule?: RecurrenceRule): string {
 // ─── デイリーノート検索ヘルパー ───────────────────────────────────────────────
 function findDailyNote(dateStr: string, notes: Note[]): Note | null {
   const [yyyy, mm, dd] = dateStr.split('-');
-  const yearFolder  = notes.find(n => n.parentId === null && n.title === yyyy);
+  const yearFolder  = notes.find(n => n.parentId === null && n.title === yyyy && !n.is_deleted);
   if (!yearFolder) return null;
-  const monthFolder = notes.find(n => n.parentId === yearFolder.id && n.title === mm);
+  const monthFolder = notes.find(n => n.parentId === yearFolder.id && n.title === mm && !n.is_deleted);
   if (!monthFolder) return null;
-  return notes.find(n => n.parentId === monthFolder.id && (n.title === dd || n.title === dateStr)) ?? null;
+  return notes.find(n => n.parentId === monthFolder.id && (n.title === dd || n.title === dateStr) && !n.is_deleted) ?? null;
 }
 
 type DailyNoteStatus = 'has-note' | 'no-note-past' | 'no-note-future';

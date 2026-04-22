@@ -8,7 +8,7 @@ import { User } from "@supabase/supabase-js";
 
 // ── 共有ヘルパー: 年/月フォルダをin-placeで検索または作成 ──────────────────
 function getOrCreateFolder(updatedNotes: Note[], title: string, parentId: string | null): Note {
-  let folder = updatedNotes.find(n => n.parentId === parentId && n.title === title);
+  let folder = updatedNotes.find(n => n.parentId === parentId && n.title === title && !n.is_deleted);
   if (!folder) {
     folder = { id: crypto.randomUUID(), title, content: '', parentId, updatedAt: Date.now() };
     updatedNotes.push(folder);
@@ -445,12 +445,12 @@ export function useAppState() {
   const todayTitle = getTodayString();
   const [yyyy, mm, dd] = todayTitle.split('-');
 
-  const yearFolder  = notes.find(n => n.parentId === null && n.title === yyyy);
+  const yearFolder  = notes.find(n => n.parentId === null && n.title === yyyy && !n.is_deleted);
   const monthFolder = yearFolder
-    ? notes.find(n => n.parentId === yearFolder.id && n.title === mm)
+    ? notes.find(n => n.parentId === yearFolder.id && n.title === mm && !n.is_deleted)
     : null;
   const hasWrittenToday = monthFolder
-    ? notes.some(n => n.parentId === monthFolder.id && (n.title === dd || n.title === todayTitle))
+    ? notes.some(n => n.parentId === monthFolder.id && (n.title === dd || n.title === todayTitle) && !n.is_deleted)
     : false;
 
   const isCalendarTab = activeTabId === '__calendar__';
@@ -463,11 +463,11 @@ export function useAppState() {
     const [yyyy, mm, dd] = dateStr.split('-');
 
     const findNote = (currentNotes: Note[]) => {
-      const yearFolder  = currentNotes.find(n => n.parentId === null && n.title === yyyy);
+      const yearFolder  = currentNotes.find(n => n.parentId === null && n.title === yyyy && !n.is_deleted);
       if (!yearFolder) return null;
-      const monthFolder = currentNotes.find(n => n.parentId === yearFolder.id && n.title === mm);
+      const monthFolder = currentNotes.find(n => n.parentId === yearFolder.id && n.title === mm && !n.is_deleted);
       if (!monthFolder) return null;
-      return currentNotes.find(n => n.parentId === monthFolder.id && (n.title === dd || n.title === dateStr)) ?? null;
+      return currentNotes.find(n => n.parentId === monthFolder.id && (n.title === dd || n.title === dateStr) && !n.is_deleted) ?? null;
     };
 
     const existing = findNote(notes);
