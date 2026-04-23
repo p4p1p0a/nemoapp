@@ -42,9 +42,9 @@ export const WorkspaceView = ({
               <div
                 key={note.id}
                 onClick={() => activateNote(note.id, note.title)}
-                className="bg-[#0a0a0a] border border-white/10 rounded-xl p-6 hover:border-white/30 hover:-translate-y-0.5 transition-all cursor-pointer flex flex-col h-[200px]"
+                className="bg-white/[0.02] backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:bg-white/[0.04] hover:border-white/20 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:-translate-y-1 transition-all duration-300 ease-out cursor-pointer flex flex-col h-[200px] group"
               >
-                <h3 className="font-semibold text-lg text-white mb-3 truncate">
+                <h3 className="font-semibold text-lg text-white mb-3 truncate tracking-wide">
                   {note.title || "無題"}
                 </h3>
                 {yIds.length > 0 && (
@@ -65,17 +65,17 @@ export const WorkspaceView = ({
                 <p className="text-white/50 text-sm line-clamp-3 mb-4 flex-1 whitespace-pre-wrap leading-relaxed">
                   {note.content}
                 </p>
-                <div className="flex justify-between items-center mt-auto">
-                  <span className="text-xs text-white/30 font-mono">
+                <div className="flex justify-between items-center mt-auto pt-4 border-t border-white/5">
+                  <span className="text-[11px] text-white/30 font-mono tracking-wider">
                     {new Date(note.updatedAt).toLocaleDateString()}
                   </span>
-                  <span
-                    className="text-white/20 hover:text-red-400 p-1 rounded hover:bg-white/5 transition-colors"
-                    onClick={e => handleDeleteNote(note.id, e)}
+                  <button
+                    className="text-white/20 hover:text-red-400 p-1.5 rounded-lg hover:bg-white/10 transition-colors opacity-0 group-hover:opacity-100"
+                    onClick={e => { e.stopPropagation(); handleDeleteNote(note.id, e); }}
                     title="このノートを削除"
                   >
                     🗑️
-                  </span>
+                  </button>
                 </div>
               </div>
             );

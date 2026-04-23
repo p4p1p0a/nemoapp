@@ -65,13 +65,13 @@ export const Sidebar = ({
       {/* 新規作成ボタン */}
       <div className="px-4 mb-2 flex gap-2">
         <button
-          className="flex-1 flex items-center justify-center gap-1 bg-white/10 hover:bg-white/20 text-white font-medium text-sm py-2 px-2 rounded-lg transition-colors border border-white/5 shadow-sm"
+          className="flex-1 flex items-center justify-center gap-1 bg-white/10 hover:bg-white/20 text-white font-medium text-sm py-2 px-2 rounded-lg transition-all duration-200 border border-white/5 shadow-sm active:scale-95"
           onClick={() => handleCreateNewNote("document")}
         >
           <span>＋</span> ページ
         </button>
         <button
-          className="flex-1 flex items-center justify-center gap-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-medium text-sm py-2 px-2 rounded-lg transition-colors border border-blue-500/20 shadow-sm"
+          className="flex-1 flex items-center justify-center gap-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-medium text-sm py-2 px-2 rounded-lg transition-all duration-200 border border-blue-500/20 shadow-sm active:scale-95"
           onClick={() => handleCreateNewNote("board")}
         >
           <span>🎨</span> ボード

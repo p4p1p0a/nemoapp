@@ -110,7 +110,7 @@ export default function Home() {
               setIsAuthOpen(true);
             }
           }}
-          className={`w-9 h-9 flex items-center justify-center rounded-lg text-lg transition-all duration-150 mb-4
+          className={`w-9 h-9 flex items-center justify-center rounded-lg text-lg transition-all duration-200 mb-4 active:scale-95
             ${user ? "text-green-400 bg-green-400/10" : "text-white/35 hover:bg-white/10"}`}
         >
           👤
@@ -151,15 +151,15 @@ export default function Home() {
         }`}
       >
         {/* タブバー */}
-        <div className="sticky top-0 bg-background border-b border-border-color flex items-center overflow-x-auto custom-scrollbar h-12 flex-shrink-0 z-20">
+        <div className="sticky top-0 z-20 w-full bg-[#000000]/60 backdrop-blur-xl border-b border-white/5 flex items-center overflow-x-auto custom-scrollbar h-14 px-4 gap-2 flex-shrink-0">
           {openedTabs.map(tab => (
             <div
               key={tab.id ?? "root"}
               onClick={() => activateNote(tab.id, tab.title)}
-              className={`flex items-center gap-3 px-5 h-full border-r border-border-color cursor-pointer min-w-[120px] max-w-[200px] select-none transition-all group
+              className={`flex items-center gap-3 px-4 py-2 cursor-pointer min-w-[120px] max-w-[200px] select-none transition-all duration-200 group rounded-xl border active:scale-[0.98]
                 ${activeTabId === tab.id
-                  ? "bg-white/5 text-foreground border-t-2 border-t-blue-500 font-medium shadow-inner"
-                  : "bg-transparent text-foreground/50 hover:bg-white/5"
+                  ? "bg-white/10 text-white border-white/10 shadow-lg"
+                  : "bg-transparent text-white/40 border-transparent hover:bg-white/5 hover:text-white/80"
                 }`}
             >
               <span className="truncate flex-1 text-xs">
