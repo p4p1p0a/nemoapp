@@ -277,7 +277,15 @@ function GenreManager({ genres, onSave, onDelete, onClose }: { genres: Genre[]; 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('#3b82f6');
-  const handleAdd = () => { const next = [...list, { id: crypto.randomUUID(), name: '新しいジャンル', color: '#6b7280', updatedAt: Date.now() }]; setList(next); onSave(next); };
+  const handleAdd = () => { 
+    const c = EVENT_COLORS[Math.floor(Math.random() * EVENT_COLORS.length)].val;
+    const nextItem = { id: crypto.randomUUID(), name: '新しいジャンル', color: c, updatedAt: Date.now() };
+    const next = [...list, nextItem]; 
+    setList(next); onSave(next); 
+    setEditingId(nextItem.id);
+    setEditName(nextItem.name);
+    setEditColor(nextItem.color);
+  };
   const handleStartEdit = (g: Genre) => { setEditingId(g.id); setEditName(g.name); setEditColor(g.color); };
   const handleCommitEdit = () => {
     const next = list.map(g => g.id === editingId ? { ...g, name: editName, color: editColor, updatedAt: Date.now() } : g);
@@ -301,10 +309,18 @@ function GenreManager({ genres, onSave, onDelete, onClose }: { genres: Genre[]; 
           {list.map(g => (
             <div key={g.id} className="flex items-center gap-3 p-3 bg-white/5 border border-white/5 rounded-xl hover:bg-white/[0.08] group">
               {editingId === g.id ? (
-                <div className="flex-1 flex items-center gap-3">
-                  <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="w-8 h-8 rounded cursor-pointer bg-transparent border-none appearance-none" />
-                  <input autoFocus value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCommitEdit()} className="flex-1 bg-[#252525] border border-white/10 rounded px-2 py-1.5 text-sm text-white outline-none" />
-                  <button onClick={handleCommitEdit} className="text-emerald-400 text-sm font-bold px-2">確定</button>
+                <div className="flex-1 flex flex-col gap-2.5">
+                  <div className="flex items-center gap-3">
+                    <input autoFocus value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCommitEdit()} className="flex-1 bg-[#252525] border border-white/10 rounded px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500/50 transition-colors" placeholder="ジャンル名" />
+                    <button onClick={handleCommitEdit} className="text-emerald-400 text-sm font-bold px-2 hover:text-emerald-300 transition-colors">確定</button>
+                  </div>
+                  <div className="flex items-center gap-2 px-1">
+                    {EVENT_COLORS.map(c => (
+                      <button key={c.val} onClick={() => setEditColor(c.val)} className={`w-5 h-5 rounded-full transition-transform ${editColor === c.val ? 'ring-2 ring-white ring-offset-1 ring-offset-transparent scale-110' : 'hover:scale-110'}`} style={{ backgroundColor: c.val }} title={c.label} />
+                    ))}
+                    <div className="w-px h-4 bg-white/10 mx-1" />
+                    <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} title="カスタムカラー" className="w-6 h-6 rounded cursor-pointer bg-transparent border-none appearance-none overflow-hidden" />
+                  </div>
                 </div>
               ) : (
                 <>
