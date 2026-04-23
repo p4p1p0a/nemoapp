@@ -1080,7 +1080,18 @@ export default function InfiniteBoard({
                 />
               ))}
               {node.type === 'image' && <img src={node.data} alt="Node" className="w-full h-full object-contain pointer-events-none" />}
-              {node.type === 'youtube' && <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${node.data}`} style={{ pointerEvents: interactiveNodeId === node.id ? 'auto' : 'none' }} onDoubleClick={() => setInteractiveNodeId(node.id)} />}
+              {node.type === 'youtube' && (
+                <div className="w-full h-full relative group" onDoubleClick={(e) => { e.stopPropagation(); setInteractiveNodeId(node.id); }}>
+                  <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${node.data}`} style={{ pointerEvents: interactiveNodeId === node.id ? 'auto' : 'none' }} className="border-none bg-black" allowFullScreen />
+                  {interactiveNodeId !== node.id && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-transparent transition-colors cursor-pointer">
+                      <div className="px-3 py-1.5 bg-black/70 border border-white/10 text-white text-[11px] font-bold rounded-xl backdrop-blur shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 pointer-events-none">
+                        <span>▶</span> ダブルクリックで動画を操作
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {node.type === 'text' && (
                 <div onDoubleClick={() => { setEditingTextNodeId(node.id); setTool('text'); }} className="w-full h-full p-2">
                   {editingTextNodeId === node.id ? 
