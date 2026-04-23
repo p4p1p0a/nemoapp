@@ -1021,7 +1021,7 @@ export default function InfiniteBoard({
         <div style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.z})`, transformOrigin: '0 0', width: '100%', height: '100%' }} className="pointer-events-none absolute inset-0">
           {(data.nodes || []).map(node => (
             <div key={node.id} className={`absolute box-border ${selectedIds.has(node.id) ? 'ring-2 ring-blue-500 z-30' : 'shadow-md z-10'}`}
-              style={{ left: node.x, top: node.y, width: node.type === 'text' ? 'max-content' : (node.width || 300), height: node.type === 'text' ? 'auto' : (node.height || 100), pointerEvents: 'auto', cursor: tool === 'select' ? 'move' : 'default' }}
+              style={{ left: node.x, top: node.y, width: node.width || 300, height: node.height || 100, minHeight: node.type === 'text' ? 'min-content' : undefined, pointerEvents: 'auto', cursor: tool === 'select' ? 'move' : 'default' }}
               onPointerDown={e => {
                 if (tool !== 'select' && !(tool === 'text' && node.type === 'text')) return;
                 e.stopPropagation();
@@ -1053,13 +1053,15 @@ export default function InfiniteBoard({
               {node.type === 'image' && <img src={node.data} alt="Node" className="w-full h-full object-contain pointer-events-none" />}
               {node.type === 'youtube' && <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${node.data}`} style={{ pointerEvents: interactiveNodeId === node.id ? 'auto' : 'none' }} onDoubleClick={() => setInteractiveNodeId(node.id)} />}
               {node.type === 'text' && (
-                <div onDoubleClick={() => { setEditingTextNodeId(node.id); setTool('text'); }}>
+                <div onDoubleClick={() => { setEditingTextNodeId(node.id); setTool('text'); }} className="w-full h-full p-2">
                   {editingTextNodeId === node.id ? 
-                    <textarea autoFocus className="bg-transparent border-none outline-none resize-none" style={{ color: node.color, fontSize: node.fontSize, width: '100%' }} value={node.data} onChange={e => {
+                    <textarea autoFocus className="bg-transparent border-none outline-none resize-none block w-full" style={{ color: node.color, fontSize: node.fontSize, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden', minHeight: '100%' }} value={node.data} onChange={e => {
                       const val = e.target.value;
                       setData({ ...dataRef.current, nodes: dataRef.current.nodes?.map(n => n.id === node.id ? { ...n, data: val } : n) });
-                    }} onBlur={() => { updateContent(JSON.stringify(dataRef.current)); setEditingTextNodeId(null); }} /> :
-                    <div style={{ color: node.color, fontSize: node.fontSize }}>{node.data || 'Aa'}</div>
+                      e.target.style.height = 'auto';
+                      e.target.style.height = e.target.scrollHeight + 'px';
+                    }} onFocus={e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} onBlur={() => { updateContent(JSON.stringify(dataRef.current)); setEditingTextNodeId(null); }} /> :
+                    <div style={{ color: node.color, fontSize: node.fontSize, whiteSpace: 'pre-wrap', wordBreak: 'break-word', width: '100%', height: '100%' }}>{node.data || 'Aa'}</div>
                   }
                 </div>
               )}
@@ -1094,7 +1096,7 @@ export default function InfiniteBoard({
                 );
               })()}
               
-              {selectedIds.has(node.id) && selectedIds.size === 1 && node.type !== 'text' && RESIZE_HANDLES.map(h => (
+              {selectedIds.has(node.id) && selectedIds.size === 1 && RESIZE_HANDLES.map(h => (
                 <div key={h.dir} className="absolute w-2 h-2 bg-blue-500 border border-white" style={{ ...h.style, cursor: h.cursor }} onPointerDown={e => {
                   e.stopPropagation();
                   setActiveNodeAction({ ids: [node.id], action: 'resize', handle: h.dir, startX: e.clientX, startY: e.clientY, startStates: { [node.id]: { x: node.x, y: node.y, w: node.width, h: node.height } } });
