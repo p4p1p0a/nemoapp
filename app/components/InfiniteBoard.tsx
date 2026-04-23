@@ -223,6 +223,35 @@ export default function InfiniteBoard({
   const [editingTextNodeId, setEditingTextNodeId] = useState<string | null>(null);
   const [interactiveNodeId, setInteractiveNodeId] = useState<string | null>(null);
 
+  // ── ペーストハンドリング (YouTube) ─────────────────────────────────────────
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      // 編集中（テキストノード内など）は除外
+      if (editingTextNodeId || (e.target as HTMLElement).tagName === 'TEXTAREA' || (e.target as HTMLElement).tagName === 'INPUT') return;
+
+      const text = e.clipboardData?.getData('text');
+      if (!text) return;
+
+      const yIds = extractYouTubeIds(text);
+      if (yIds.length > 0) {
+        e.preventDefault();
+        const pt = { 
+          x: -cameraRef.current.x / cameraRef.current.z + window.innerWidth / 2 / cameraRef.current.z, 
+          y: -cameraRef.current.y / cameraRef.current.z + window.innerHeight / 2 / cameraRef.current.z 
+        };
+        const newNode: RectNode = {
+          id: crypto.randomUUID(), type: 'youtube', data: yIds[0],
+          x: pt.x - 200, y: pt.y - 112, width: 400, height: 225
+        };
+        const next = { ...dataRef.current, nodes: [...(dataRef.current.nodes || []), newNode] };
+        setData(next); 
+        updateContent(JSON.stringify(next));
+      }
+    };
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [editingTextNodeId, updateContent]);
+
   // ── 選択・相互作用 ──────────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSnapToGrid, setIsSnapToGrid] = useState(false);

@@ -1,6 +1,7 @@
 "use client";
 
 import { Note } from '../types';
+import { extractYouTubeIds } from '../lib/utils';
 
 // ── Inline token types ────────────────────────────────────────────────────────
 type InlineToken =
@@ -218,10 +219,18 @@ export function MarkdownRenderer({
         }
 
         // ── Regular paragraph ──
+        const yIds = extractYouTubeIds(line);
         return (
-          <p key={lineIndex} className="text-white/90 py-0.5">
-            <InlineTokens tokens={parseInline(line, notes)} notes={notes} onNavigate={onNavigate} />
-          </p>
+          <div key={lineIndex} className="flex flex-col gap-2 py-0.5">
+            <p className="text-white/90">
+              <InlineTokens tokens={parseInline(line, notes)} notes={notes} onNavigate={onNavigate} />
+            </p>
+            {yIds.length > 0 && (
+              <div className="my-2 rounded-2xl overflow-hidden shadow-2xl border border-white/10" style={{ maxWidth: '640px', aspectRatio: '16/9' }}>
+                <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${yIds[0]}`} allowFullScreen className="border-none bg-black" />
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
