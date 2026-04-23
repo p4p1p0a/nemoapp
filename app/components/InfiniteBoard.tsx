@@ -528,6 +528,10 @@ export default function InfiniteBoard({
         e.preventDefault();
         handleRedoRef.current();
       }
+      if (e.shiftKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        setTool('pan');
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -843,7 +847,7 @@ export default function InfiniteBoard({
   const selNode = selectedIds.size === 1 ? (data.nodes || []).find(n => selectedIds.has(n.id)) : null;
   const selStroke = selectedIds.size === 1 ? data.strokes.find(s => selectedIds.has(s.id)) : null;
   const selEdge = selectedIds.size === 1 ? (data.edges || []).find(e => selectedIds.has(e.id)) : null;
-  const showInspector = tool === 'select' && selectedIds.size === 1 && (selStroke || selEdge || (selNode && selNode.type !== 'image' && selNode.type !== 'youtube' && selNode.type !== 'page'));
+  const showInspector = (tool === 'select' || tool === 'text') && selectedIds.size === 1 && (selStroke || selEdge || (selNode && selNode.type !== 'image' && selNode.type !== 'youtube' && selNode.type !== 'page'));
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#0a0a0a] select-none">
@@ -930,7 +934,7 @@ export default function InfiniteBoard({
                         selNode?.type === 'text' ? (selNode.fontSize || 24) : (selNode?.strokeWidth || 2);
 
         return (
-          <div className="absolute top-20 right-6 z-50 flex flex-col bg-black/80 backdrop-blur-2xl shadow-2xl rounded-2xl border border-white/10 overflow-hidden w-[240px]">
+          <div className="absolute top-20 right-6 z-50 flex flex-col bg-black/80 backdrop-blur-2xl shadow-2xl rounded-2xl border border-white/10 overflow-hidden w-[240px]" onPointerDown={e => { e.stopPropagation(); if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault(); }}>
             <div className="px-4 py-3 border-b border-white/10">
               <span className="text-sm font-medium text-white">{typeLabel}</span>
             </div>

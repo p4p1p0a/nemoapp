@@ -340,6 +340,8 @@ export function useAppState() {
   // ── 新規ノート作成 ──────────────────────────────────────────────────────────
   const handleCreateNewNote = async (type: 'document' | 'board' = 'document', parentId?: string | null) => {
     const actualParentId = parentId !== undefined ? parentId : (activeTabId && activeTabId !== '__calendar__' ? activeTabId : null);
+    const siblings = notes.filter(n => n.parentId === actualParentId);
+    const maxOrder = siblings.reduce((max, n) => Math.max(max, n.order_index ?? 0), 0);
     const newNote: Note = {
       id: crypto.randomUUID(),
       title:   type === 'board' ? '無題のボード' : '無題のノート',
@@ -347,6 +349,7 @@ export function useAppState() {
       parentId: actualParentId,
       updatedAt: Date.now(),
       type,
+      order_index: siblings.length > 0 ? maxOrder + 100 : 0,
     };
     setNotes(prev => [...prev, newNote]);
     if (user) await supabase.from('notes').upsert({ ...newNote, user_id: user.id });
@@ -381,10 +384,44 @@ export function useAppState() {
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
-  const handleMoveNote = async (id: string, newParentId: string | null) => {
-    const note = notes.find(n => n.id === id);
-    if (!note) return;
-    const updated = { ...note, parentId: newParentId, updatedAt: Date.now() };
+  const handleMoveNote = async (id: string, newParentId: string | null, targetId?: string, position?: 'above' | 'below' | 'inside') => {
+    const noteToMove = notes.find(n => n.id === id);
+    if (!noteToMove) return;
+
+    let finalParentId = newParentId;
+    let newOrderIndex = 0;
+
+    if (targetId && position && position !== 'inside') {
+      const targetNote = notes.find(n => n.id === targetId);
+      if (targetNote) {
+        finalParentId = targetNote.parentId;
+        const siblings = notes
+          .filter(n => n.parentId === targetNote.parentId && n.id !== id && !n.is_deleted)
+          .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        
+        const targetIndex = siblings.findIndex(n => n.id === targetId);
+        
+        if (targetIndex !== -1) {
+          if (position === 'above') {
+            const prev = targetIndex > 0 ? (siblings[targetIndex - 1].order_index ?? 0) : null;
+            const current = siblings[targetIndex].order_index ?? 0;
+            newOrderIndex = prev === null ? current - 100 : (prev + current) / 2;
+          } else if (position === 'below') {
+            const next = targetIndex < siblings.length - 1 ? (siblings[targetIndex + 1].order_index ?? 0) : null;
+            const current = siblings[targetIndex].order_index ?? 0;
+            newOrderIndex = next === null ? current + 100 : (current + next) / 2;
+          }
+        } else {
+          newOrderIndex = targetNote.order_index ?? 0;
+        }
+      }
+    } else {
+      const siblings = notes.filter(n => n.parentId === newParentId && n.id !== id && !n.is_deleted);
+      const maxOrder = siblings.reduce((max, n) => Math.max(max, n.order_index ?? 0), 0);
+      newOrderIndex = siblings.length > 0 ? maxOrder + 100 : 0;
+    }
+
+    const updated = { ...noteToMove, parentId: finalParentId, order_index: newOrderIndex, updatedAt: Date.now() };
     setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };

@@ -14,7 +14,7 @@ interface SidebarNodeProps {
   isDescendant: (nodeId: string, targetId: string) => boolean;
   onDelete?: (id: string, e: React.MouseEvent) => void;
   onRename?: (id: string, title: string) => void;
-  onMove?: (id: string, parentId: string | null) => void;
+  onMove?: (id: string, parentId: string | null, targetId?: string, position?: 'above' | 'below' | 'inside') => void;
   onCreateChild?: (parentId: string, type: 'document' | 'board') => void;
 }
 
@@ -95,10 +95,11 @@ export const SidebarNode = ({
   onMove,
   onCreateChild,
 }: SidebarNodeProps) => {
-  const childrenNodes = notes.filter(n => n.parentId === note.id);
+  const childrenNodes = notes.filter(n => n.parentId === note.id).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
   const isActive = note.id === activeTabId;
   const [isOpen, setIsOpen] = useState(true);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [dropPosition, setDropPosition] = useState<'above' | 'below' | 'inside' | null>(null);
 
   // コンテキストメニュー
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
@@ -135,20 +136,41 @@ export const SidebarNode = ({
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
     if (draggedNodeId === note.id || (draggedNodeId && isDescendant(draggedNodeId, note.id))) return;
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    
+    if (y < rect.height * 0.25) {
+      setDropPosition('above');
+    } else if (y > rect.height * 0.75) {
+      setDropPosition('below');
+    } else {
+      setDropPosition('inside');
+    }
+
     setIsDragOver(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
     setIsDragOver(false);
+    setDropPosition(null);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
     setIsDragOver(false);
+    const pos = dropPosition;
+    setDropPosition(null);
+
     if (!draggedNodeId) return;
     if (draggedNodeId === note.id || isDescendant(draggedNodeId, note.id)) return;
-    onMove?.(draggedNodeId, note.id);
+    
+    if (pos === 'inside') {
+      onMove?.(draggedNodeId, note.id, undefined, 'inside');
+    } else {
+      onMove?.(draggedNodeId, note.parentId, note.id, pos || 'below');
+    }
     setDraggedNodeId(null);
   };
 
@@ -174,9 +196,9 @@ export const SidebarNode = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
-        className={`flex items-center gap-1 cursor-pointer transition-colors rounded text-sm group select-none
+        className={`flex items-center gap-1 cursor-pointer transition-colors rounded text-sm group select-none relative
           ${isActive ? "bg-accent-blue text-white font-medium" : "hover:bg-accent-hover text-foreground/60"}
-          ${isDragOver ? "ring-2 ring-accent-blue bg-accent-blue/10" : ""}
+          ${isDragOver && dropPosition === 'inside' ? "ring-2 ring-accent-blue bg-accent-blue/10" : ""}
         `}
         style={{
           paddingLeft:   `${depth * 16 + 12}px`,
@@ -185,6 +207,8 @@ export const SidebarNode = ({
           paddingBottom: "6px",
         }}
       >
+        {isDragOver && dropPosition === 'above' && <div className="absolute top-0 left-0 right-0 h-0.5 bg-blue-400 z-50 rounded shadow-[0_0_8px_rgba(96,165,250,0.8)]" />}
+        {isDragOver && dropPosition === 'below' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-400 z-50 rounded shadow-[0_0_8px_rgba(96,165,250,0.8)]" />}
         <div
           className="w-5 h-5 flex items-center justify-center text-[10px] text-white/30 hover:bg-white/10 rounded transition-colors"
           onClick={toggleOpen}

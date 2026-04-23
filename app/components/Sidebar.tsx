@@ -18,7 +18,7 @@ interface SidebarProps {
   handleCreateNewNote: (type: "document" | "board", parentId?: string | null) => void;
   handleDeleteNote: (id: string, e: React.MouseEvent) => void;
   handleRenameNote: (id: string, title: string) => void;
-  handleMoveNote: (id: string, parentId: string | null) => void;
+  handleMoveNote: (id: string, parentId: string | null, targetId?: string, position?: 'above' | 'below' | 'inside') => void;
 }
 
 export const Sidebar = ({
@@ -38,7 +38,7 @@ export const Sidebar = ({
   handleRenameNote,
   handleMoveNote,
 }: SidebarProps) => {
-  const rootNotes = notes.filter(n => n.parentId === null);
+  const rootNotes = notes.filter(n => n.parentId === null).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
   return (
     <aside

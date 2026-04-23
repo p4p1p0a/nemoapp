@@ -7,6 +7,7 @@ export type Note = {
   type?: 'document' | 'board' | 'daily';
   color?: string;
   is_deleted?: boolean;
+  order_index?: number;
 };
 
 export type Tab = {
