@@ -235,7 +235,7 @@ export const SidebarNode = ({
         ) : (
           <span
             className="truncate flex-1 pl-1"
-            onClick={() => activateNote(note.id, note.title)}
+            onDoubleClick={() => activateNote(note.id, note.title)}
           >
             {note.color && (
               <span 

@@ -1,343 +1,244 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAppState } from "./hooks/useAppState";
 import { Sidebar } from "./components/Sidebar";
-import { DailyEditor } from "./components/DailyEditor";
-import { WorkspaceView } from "./components/WorkspaceView";
 import { NoteDetailView } from "./components/NoteDetailView";
 import { AuthModal } from "./components/AuthModal";
 import InfiniteBoard from "./components/InfiniteBoard";
 import Calendar from "./components/Calendar";
+import AppWindow from "./components/AppWindow";
+import Taskbar from "./components/Taskbar";
 
 export default function Home() {
   const {
     notes, setNotes, isLoaded,
-    dailyContent, setDailyContent, handleDailySave,
+    dailyContent, setDailyContent,
     searchQuery, setSearchQuery,
     activePanel, setActivePanel,
-    openedTabs, activeTabId,
     draggedNodeId, setDraggedNodeId,
-    sidebarWidth, isResizing, setIsResizing,
-    activateNote, closeTab,
-    handleCreateNewNote, handleUpdateTitle, handleUpdateContent, handleDeleteNote, handleMoveNote,
     isDescendant,
+    handleCreateNewNote, handleUpdateTitle, handleUpdateContent, handleDeleteNote, handleMoveNote,
     openOrCreateDailyNote,
-    todayTitle, hasWrittenToday, shouldShowDailyEditor,
-    activeNote, rootNotes, childNotes,
+    rootNotes,
     calendarEvents, setCalendarEvents, handleDeleteEvent,
     genres, setGenres, handleDeleteGenre,
     theme, setTheme,
-    dailyColor, setDailyColor,
-    user, handleLogout,
-    lastError,
+    user, handleLogout, lastError,
+    windows, activeWindowId,
+    openWindow, closeWindow, minimizeWindow, maximizeWindow, toggleWindow,
+    focusWindow, moveWindow, resizeWindow,
   } = useAppState();
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(false);
+  const sidebarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  if (!isLoaded) return <div className="min-h-screen bg-black" />;
+  const showSidebar = () => {
+    if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
+    setSidebarVisible(true);
+  };
+  const hideSidebar = () => {
+    sidebarTimerRef.current = setTimeout(() => setSidebarVisible(false), 400);
+  };
 
-  const isCalendarTab = activeTabId === '__calendar__';
+  if (!isLoaded) return <div className="min-h-screen" style={{ background: 'hsl(225,55%,14%)' }} />;
+
+  const getWindowContent = (id: string) => {
+    if (id === '__calendar__') {
+      return (
+        <Calendar
+          notes={notes}
+          onOpenDailyNote={openOrCreateDailyNote}
+          onNavigateToNote={(noteId) => openWindow(noteId, notes.find(n => n.id === noteId)?.title || '無題')}
+          events={calendarEvents}
+          onSaveEvents={setCalendarEvents}
+          onDeleteEvent={handleDeleteEvent}
+          genres={genres}
+          onSaveGenres={setGenres}
+          onDeleteGenre={handleDeleteGenre}
+        />
+      );
+    }
+    const note = notes.find(n => n.id === id);
+    if (!note) return <div className="p-8 text-white/30">ノートが見つかりません</div>;
+    if (note.type === 'board') {
+      return (
+        <InfiniteBoard
+          key={`board-${note.id}`}
+          content={note.content}
+          updateContent={(c) => handleUpdateContent(note.id, c)}
+          notes={notes}
+          activateNote={(noteId, title) => openWindow(noteId ?? '', title ?? '無題')}
+        />
+      );
+    }
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="max-w-4xl mx-auto p-8">
+          <NoteDetailView
+            activeNote={note}
+            notes={notes}
+            childNotes={notes.filter(n => n.parentId === note.id && !n.is_deleted)}
+            activateNote={(noteId, title) => openWindow(noteId ?? '', title ?? '無題')}
+            handleUpdateTitle={(title) => handleUpdateTitle(note.id, title)}
+            handleUpdateContent={(content) => handleUpdateContent(note.id, content)}
+            handleDeleteNote={handleDeleteNote}
+          />
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
       data-theme={theme}
-      className={`flex h-screen bg-background text-foreground font-sans overflow-hidden ${
-        isResizing ? "select-none cursor-col-resize" : ""
-      }`}
+      className="w-screen h-screen overflow-hidden relative select-none"
+      style={{ background: 'linear-gradient(135deg, hsl(225,55%,12%) 0%, hsl(230,50%,16%) 100%)' }}
     >
-      {/* 診断パネル（論理削除モード用） */}
+      {/* Error indicator */}
       {lastError && (
-        <div className="fixed bottom-4 right-4 z-[9999] bg-black/80 backdrop-blur-md border border-red-500/50 rounded-lg p-3 text-[10px] font-mono text-red-100 flex flex-col gap-1 shadow-2xl pointer-events-none">
+        <div className="fixed bottom-16 right-4 z-[9999] bg-black/80 backdrop-blur-md border border-red-500/50 rounded-lg p-3 text-[10px] font-mono text-red-100 pointer-events-none">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="font-bold">SYNC ERROR</span>
           </div>
-          <div className="mt-1 max-w-[200px] break-words">
-            {lastError}
-          </div>
+          <div className="mt-1 max-w-[200px] break-words">{lastError}</div>
         </div>
       )}
 
-      {/* ===============================
-          アクティビティバー（左端固定の縦型アイコンレール）
-      =============================== */}
-      <nav className="w-12 flex-shrink-0 flex flex-col items-center py-4 gap-1 bg-activity-bg border-r border-border-color z-20">
-        {(
-          [
-            { id: "files",    icon: "📁", label: "ファイルツリー" },
-            { id: "calendar", icon: "📅", label: "カレンダー"     },
-          ] as const
-        ).map(({ id, icon, label }) => (
-          <button
-            key={id}
-            title={label}
-            onClick={() => {
-              if (id === "calendar") {
-                // カレンダーをタブとして開く（3-A）
-                activateNote("__calendar__", "📅 カレンダー");
-              } else {
-                setActivePanel(prev => (prev === id ? null : id));
-              }
-            }}
-            className={`w-9 h-9 flex items-center justify-center rounded-lg text-lg transition-all duration-150
-              ${
-                id === "files"    && activePanel === "files"    ? "bg-white/15 text-white shadow-inner" :
-                id === "calendar" && isCalendarTab              ? "bg-white/15 text-white shadow-inner" :
-                "text-white/35 hover:bg-white/10 hover:text-white/70"
-              }`}
-          >
-            {icon}
-          </button>
-        ))}
+      {/* Left hover zone */}
+      <div
+        className="fixed left-0 top-0 bottom-12 w-4 z-[1000]"
+        onMouseEnter={showSidebar}
+        onMouseLeave={hideSidebar}
+      />
 
-        <div className="flex-1" />
-
-        <button
-          title="設定"
-          onClick={() => setIsSettingsOpen(true)}
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-lg text-white/35 hover:bg-white/10 hover:text-white/70 transition-all duration-150"
-        >
-          ⚙️
-        </button>
-
-        <button
-          title={user ? `サインアウト (${user.email})` : "サインイン"}
-          onClick={() => {
-            if (user) {
-              if (confirm('サインアウトしますか？（ローカルキャッシュがクリアされます）')) handleLogout();
-            } else {
-              setIsAuthOpen(true);
-            }
-          }}
-          className={`w-9 h-9 flex items-center justify-center rounded-lg text-lg transition-all duration-200 mb-4 active:scale-95
-            ${user ? "text-green-400 bg-green-400/10" : "text-white/35 hover:bg-white/10"}`}
-        >
-          👤
-        </button>
-      </nav>
-
-      {/* ===============================
-          ファイルツリー サイドバー
-      =============================== */}
-      {activePanel === "files" && (
-        <Sidebar
-          notes={notes}
-          activeTabId={activeTabId}
-          activateNote={activateNote}
-          draggedNodeId={draggedNodeId}
-          setDraggedNodeId={setDraggedNodeId}
-          isDescendant={isDescendant}
-          sidebarWidth={sidebarWidth}
-          isResizing={isResizing}
-          setIsResizing={setIsResizing}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          handleCreateNewNote={handleCreateNewNote}
-          handleDeleteNote={handleDeleteNote}
-          handleRenameNote={handleUpdateTitle}
-          handleMoveNote={handleMoveNote}
-        />
-      )}
-
-      {/* ===============================
-          メイン領域
-      =============================== */}
-      <main
-        className={`flex-1 flex flex-col relative bg-[#000000] ${
-          activeNote?.type === "board" || isCalendarTab
-            ? "overflow-hidden"
-            : "overflow-y-auto"
-        }`}
+      {/* Sidebar overlay */}
+      <div
+        className="fixed left-0 top-0 bottom-12 z-[999] flex"
+        style={{
+          transform: sidebarVisible ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 0.25s cubic-bezier(0.4,0,0.2,1)',
+        }}
+        onMouseEnter={showSidebar}
+        onMouseLeave={hideSidebar}
       >
-        {/* タブバー */}
-        <div className="sticky top-0 z-20 w-full bg-[#000000]/60 backdrop-blur-xl border-b border-white/5 flex items-center overflow-x-auto custom-scrollbar h-14 px-4 gap-2 flex-shrink-0">
-          {openedTabs.map(tab => (
-            <div
-              key={tab.id ?? "root"}
-              onClick={() => activateNote(tab.id, tab.title)}
-              className={`flex items-center gap-3 px-4 py-2 cursor-pointer min-w-[120px] max-w-[200px] select-none transition-all duration-200 group rounded-xl border active:scale-[0.98]
-                ${activeTabId === tab.id
-                  ? "bg-white/10 text-white border-white/10 shadow-lg"
-                  : "bg-transparent text-white/40 border-transparent hover:bg-white/5 hover:text-white/80"
-                }`}
-            >
-              <span className="truncate flex-1 text-xs">
-                {tab.id === null ? "🏠 Workspace" : (tab.title || "無題")}
-              </span>
-              <span
-                className={`text-[10px] w-5 h-5 flex items-center justify-center rounded-full transition-colors
-                  ${activeTabId === tab.id
-                    ? "text-white/40 hover:bg-white/10 hover:text-white"
-                    : "text-transparent group-hover:text-white/30 hover:bg-white/10"
-                  }`}
-                onClick={e => closeTab(e, tab.id)}
-                title="閉じる"
-              >
-                ✕
-              </span>
-            </div>
-          ))}
+        {/* Sidebar panel */}
+        <div className="h-full flex flex-col" style={{ width: 280, background: 'rgba(10,10,30,0.96)', backdropFilter: 'blur(24px)', borderRight: '1px solid rgba(255,255,255,0.08)' }}>
+          {/* Header */}
+          <div className="px-4 pt-5 pb-3 flex items-center gap-2 border-b border-white/5">
+            <span className="text-xl">🐟</span>
+            <span className="text-sm font-bold text-white/80 tracking-wide">NemoApp</span>
+            <div className="flex-1" />
+            <button
+              title={user ? `サインアウト (${user.email})` : 'サインイン'}
+              onClick={() => user ? (confirm('サインアウトしますか？') && handleLogout()) : setIsAuthOpen(true)}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all ${user ? 'text-green-400 bg-green-400/10' : 'text-white/40 hover:bg-white/10'}`}
+            >👤</button>
+            <button onClick={() => setIsSettingsOpen(true)} className="w-7 h-7 rounded-lg flex items-center justify-center text-sm text-white/40 hover:bg-white/10 transition-all">⚙️</button>
+          </div>
+
+          {/* Create buttons */}
+          <div className="px-3 py-3 flex gap-2">
+            <button onClick={() => handleCreateNewNote('document')} className="flex-1 flex items-center justify-center gap-1 bg-white/8 hover:bg-white/15 text-white/70 hover:text-white text-xs py-2 px-2 rounded-lg transition-all border border-white/5">
+              <span>＋</span> ページ
+            </button>
+            <button onClick={() => handleCreateNewNote('board')} className="flex-1 flex items-center justify-center gap-1 bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-xs py-2 px-2 rounded-lg transition-all border border-blue-500/15">
+              <span>🎨</span> ボード
+            </button>
+          </div>
+
+          {/* Search */}
+          <div className="px-3 pb-2">
+            <input
+              type="search"
+              placeholder="🔍 検索..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-xs text-white/70 placeholder:text-white/25 outline-none focus:border-white/25 transition-colors"
+            />
+          </div>
+
+          {/* Tree */}
+          <div className="flex-1 overflow-y-auto">
+            <Sidebar
+              notes={notes}
+              activeTabId={activeWindowId}
+              activateNote={(id, title) => id !== null && openWindow(id, title || '無題', notes.find(n => n.id === id)?.type)}
+              draggedNodeId={draggedNodeId}
+              setDraggedNodeId={setDraggedNodeId}
+              isDescendant={isDescendant}
+              sidebarWidth={280}
+              isResizing={false}
+              setIsResizing={() => {}}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              handleCreateNewNote={handleCreateNewNote}
+              handleDeleteNote={handleDeleteNote}
+              handleRenameNote={handleUpdateTitle}
+              handleMoveNote={handleMoveNote}
+            />
+          </div>
         </div>
+      </div>
 
-        {/* ── カレンダータブ ── */}
-        {isCalendarTab ? (
-          <div className="flex-1 relative overflow-hidden">
-            <Calendar
-              notes={notes}
-              onOpenDailyNote={openOrCreateDailyNote}
-              onNavigateToNote={(noteId) => {
-                activateNote(noteId);
-                setActivePanel("files");
-              }}
-              events={calendarEvents}
-              onSaveEvents={setCalendarEvents}
-              onDeleteEvent={handleDeleteEvent}
-              genres={genres}
-              onSaveGenres={setGenres}
-              onDeleteGenre={handleDeleteGenre}
-            />
-          </div>
-
-        /* ── ボードビュー ── */
-        ) : activeNote?.type === "board" ? (
-          <div className="flex-1 w-full h-full relative">
-            <div className="absolute top-4 right-6 z-50 flex items-center bg-black/60 shadow-lg backdrop-blur border border-white/10 rounded-lg px-4 py-2">
-              <input
-                key={`title-${activeNote.id}`}
-                type="text"
-                className="bg-transparent border-none text-xl font-bold tracking-tight outline-none text-white placeholder:text-white/20 text-right w-[150px] focus:w-[250px] transition-all"
-                defaultValue={activeNote.title}
-                onChange={e => handleUpdateTitle(activeNote.id, e.target.value)}
-                placeholder="無題のボード"
-              />
-              <div className="w-[1px] h-4 bg-white/20 mx-3" />
-              <span
-                className="text-white/40 hover:text-red-400 cursor-pointer transition-colors text-sm"
-                onClick={e => handleDeleteNote(activeNote.id, e)}
-                title="ボードを削除"
-              >
-                🗑️
-              </span>
-            </div>
-            <InfiniteBoard
-              key={`board-${activeNote.id}`}
-              content={activeNote.content}
-              updateContent={(content) => handleUpdateContent(activeNote.id, content)}
-              notes={notes}
-              activateNote={activateNote}
-            />
-          </div>
-
-        /* ── テキスト/ワークスペース ── */
-        ) : (
-          <div className="max-w-4xl w-full mx-auto p-8 md:p-12 lg:px-16 block min-h-full pb-32">
-            {shouldShowDailyEditor ? (
-              <DailyEditor
-                todayTitle={todayTitle}
-                dailyContent={dailyContent}
-                setDailyContent={setDailyContent}
-                dailyColor={dailyColor}
-                setDailyColor={setDailyColor}
-                handleDailySave={handleDailySave}
-              />
-            ) : activeTabId === null && hasWrittenToday ? (
-              <WorkspaceView
-                rootNotes={rootNotes}
-                activateNote={activateNote}
-                handleCreateNewNote={handleCreateNewNote}
-                handleDeleteNote={handleDeleteNote}
-              />
-            ) : activeNote ? (
-              <NoteDetailView
-                activeNote={activeNote}
-                notes={notes}
-                childNotes={childNotes}
-                activateNote={activateNote}
-                handleUpdateTitle={(title) => handleUpdateTitle(activeNote.id, title)}
-                handleUpdateContent={(content) => handleUpdateContent(activeNote.id, content)}
-                handleDeleteNote={handleDeleteNote}
-              />
-            ) : (
-              <div className="py-20 text-center text-white/30">
-                ノートが開かれていません。
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-
-      {/* ===============================
-          設定モーダル
-      =============================== */}
-      {isSettingsOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setIsSettingsOpen(false)}
+      {/* Windows */}
+      {windows.map(win => (
+        <AppWindow
+          key={win.id}
+          win={win}
+          onFocus={() => focusWindow(win.id)}
+          onClose={() => closeWindow(win.id)}
+          onMinimize={() => minimizeWindow(win.id)}
+          onMaximize={() => maximizeWindow(win.id)}
+          onMove={(x, y) => moveWindow(win.id, x, y)}
+          onResize={(x, y, w, h) => resizeWindow(win.id, x, y, w, h)}
         >
-          <div
-            className="bg-[#181818] border border-white/10 rounded-2xl shadow-2xl p-8 w-[400px] max-w-[95vw]"
-            onClick={e => e.stopPropagation()}
-          >
+          {getWindowContent(win.id)}
+        </AppWindow>
+      ))}
+
+      {/* Taskbar */}
+      <Taskbar
+        windows={windows}
+        onToggle={toggleWindow}
+        activeWindowId={activeWindowId}
+      />
+
+      {/* Settings modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
+          <div className="bg-[#181828] border border-white/10 rounded-2xl shadow-2xl p-8 w-[400px] max-w-[95vw]" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-xl font-bold text-white">設定</h2>
-              <button
-                onClick={() => setIsSettingsOpen(false)}
-                className="text-white/40 hover:text-white transition-colors"
-              >
-                ✕
-              </button>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-white/40 hover:text-white transition-colors">✕</button>
             </div>
-
             <div className="mb-8">
-              <label className="block text-sm font-medium text-white/50 mb-4 tracking-wider uppercase">
-                デザインテーマ
-              </label>
+              <label className="block text-xs font-medium text-white/50 mb-4 tracking-wider uppercase">デザインテーマ</label>
               <div className="grid grid-cols-2 gap-3">
-                {(
-                  [
-                    { id: "dark",  label: "Dark",  color: "#111", text: "#fff" },
-                    { id: "light", label: "Light", color: "#fff", text: "#111" },
-                    { id: "nord",  label: "Nord",  color: "#2e3440", text: "#eceff4" },
-                    { id: "sepia", label: "Sepia", color: "#f4ecd8", text: "#5b4636" },
-                  ] as const
-                ).map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => setTheme(t.id)}
-                    className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition-all ${
-                      theme === t.id
-                        ? "border-blue-500 ring-2 ring-blue-500/20 bg-blue-500/10"
-                        : "border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/20"
-                    }`}
-                  >
-                    <div
-                      className="w-12 h-12 rounded-lg shadow-md border border-white/10 flex items-center justify-center text-xs"
-                      style={{ backgroundColor: t.color, color: t.text }}
-                    >
-                      Aa
-                    </div>
+                {([
+                  { id: 'dark',  label: 'Dark',  color: '#111', text: '#fff' },
+                  { id: 'light', label: 'Light', color: '#fff', text: '#111' },
+                  { id: 'nord',  label: 'Nord',  color: '#2e3440', text: '#eceff4' },
+                  { id: 'sepia', label: 'Sepia', color: '#f4ecd8', text: '#5b4636' },
+                ] as const).map(t => (
+                  <button key={t.id} onClick={() => setTheme(t.id)}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition-all ${theme === t.id ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-500/10' : 'border-white/5 bg-white/5 hover:bg-white/10'}`}>
+                    <div className="w-12 h-12 rounded-lg shadow-md border border-white/10 flex items-center justify-center text-xs" style={{ backgroundColor: t.color, color: t.text }}>Aa</div>
                     <span className="text-sm font-medium text-white/90">{t.label}</span>
                   </button>
                 ))}
               </div>
             </div>
-
             <div className="pt-4 border-t border-white/5 text-center">
-              <p className="text-[11px] text-white/20 tracking-widest uppercase">
-                Anti Gravity Memo App v2.0
-              </p>
+              <p className="text-[11px] text-white/20 tracking-widest uppercase">NemoApp v3.0 — Desktop Edition</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* ===============================
-          認証モーダル
-      =============================== */}
-      {isAuthOpen && (
-        <AuthModal onClose={() => setIsAuthOpen(false)} />
-      )}
+      {isAuthOpen && <AuthModal onClose={() => setIsAuthOpen(false)} />}
     </div>
   );
 }

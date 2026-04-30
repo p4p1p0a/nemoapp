@@ -10,9 +10,21 @@ export type Note = {
   order_index?: number;
 };
 
-export type Tab = {
-  id: string | null;
+export type WinState = 'normal' | 'minimized' | 'maximized';
+
+export type AppWindowData = {
+  id: string;          // note.id | '__calendar__'
   title: string;
+  noteType?: 'document' | 'board' | 'daily' | 'calendar';
+  state: WinState;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+  isPinned?: boolean;  // true = タスクバーから消えない（カレンダー用）
+  /** maximized 前の状態を保存 */
+  prevRect?: { x: number; y: number; width: number; height: number };
 };
 
 export type Genre = {

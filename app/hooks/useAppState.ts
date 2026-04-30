@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Note, Tab, CalendarEvent, Genre } from "../types";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Note, AppWindowData, WinState, CalendarEvent, Genre } from "../types";
 import { getTodayString } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
 
-// ── 共有ヘルパー: 年/月フォルダをin-placeで検索または作成 ──────────────────
 function getOrCreateFolder(updatedNotes: Note[], title: string, parentId: string | null): Note {
   let folder = updatedNotes.find(n => n.parentId === parentId && n.title === title && !n.is_deleted);
   if (!folder) {
@@ -16,67 +15,133 @@ function getOrCreateFolder(updatedNotes: Note[], title: string, parentId: string
   return folder;
 }
 
+const CALENDAR_WIN: AppWindowData = {
+  id: '__calendar__', title: '📅 カレンダー', noteType: 'calendar',
+  state: 'minimized', x: 80, y: 60, width: 1000, height: 680,
+  zIndex: 1, isPinned: true,
+};
+
+let zCounter = 100;
+const nextZ = () => ++zCounter;
+
+const cascade = (index: number) => ({
+  x: 80 + index * 30,
+  y: 60 + index * 30,
+});
+
 export function useAppState() {
-  // ── ノート ──────────────────────────────────────────────────────────────────
   const [notes, setNotes] = useState<Note[]>([]);
   const [dailyContent, setDailyContent] = useState('');
   const [dailyColor, setDailyColor] = useState('#3b82f6');
   const [isLoaded, setIsLoaded] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-
-  // ── UI ─────────────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [activePanel, setActivePanel] = useState<'files' | null>('files');
-
-  // ── タブ ────────────────────────────────────────────────────────────────────
-  const [openedTabs, setOpenedTabs] = useState<Tab[]>([{ id: null, title: 'WORKSPACE' }]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-
-  // ── D&D ─────────────────────────────────────────────────────────────────────
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
-
-  // ── サイドバーリサイズ ──────────────────────────────────────────────────────
-  const [sidebarWidth, setSidebarWidth] = useState(256);
-  const [isResizing, setIsResizing] = useState(false);
-
-  // ── カレンダーイベント ─────────────────────────────────────────────────────
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
-
-  // ── デザインテーマ ──────────────────────────────────────────────────────────
   const [theme, setTheme] = useState<'dark' | 'light' | 'nord' | 'sepia'>('dark');
 
-  // リサイズマウスイベント
-  useEffect(() => {
-    if (!isResizing) return;
-    const handleMouseMove = (e: MouseEvent) => {
-      setSidebarWidth(Math.min(Math.max(e.clientX, 150), 800));
-    };
-    const handleMouseUp = () => setIsResizing(false);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing]);
+  // ── ウィンドウシステム ────────────────────────────────────────────────────
+  const [windows, setWindows] = useState<AppWindowData[]>([CALENDAR_WIN]);
+  const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
+  const windowCountRef = useRef(0);
 
+  const focusWindow = useCallback((id: string) => {
+    setActiveWindowId(id);
+    setWindows(prev => prev.map(w => w.id === id ? { ...w, zIndex: nextZ() } : w));
+  }, []);
+
+  const openWindow = useCallback((id: string, title: string, noteType?: AppWindowData['noteType']) => {
+    setWindows(prev => {
+      const existing = prev.find(w => w.id === id);
+      if (existing) {
+        // すでに開いている場合は前面に & 最小化解除
+        return prev.map(w => w.id === id ? { ...w, state: 'normal', zIndex: nextZ() } : w);
+      }
+      const idx = windowCountRef.current++;
+      const pos = cascade(idx % 8);
+      const newWin: AppWindowData = {
+        id, title, noteType, state: 'normal',
+        x: pos.x, y: pos.y, width: 900, height: 600,
+        zIndex: nextZ(),
+      };
+      return [...prev, newWin];
+    });
+    setActiveWindowId(id);
+  }, []);
+
+  const closeWindow = useCallback((id: string) => {
+    setWindows(prev => {
+      const win = prev.find(w => w.id === id);
+      if (win?.isPinned) return prev.map(w => w.id === id ? { ...w, state: 'minimized' } : w);
+      return prev.filter(w => w.id !== id);
+    });
+    setActiveWindowId(prev => prev === id ? null : prev);
+  }, []);
+
+  const minimizeWindow = useCallback((id: string) => {
+    setWindows(prev => prev.map(w => w.id === id ? { ...w, state: 'minimized' } : w));
+    setActiveWindowId(prev => prev === id ? null : prev);
+  }, []);
+
+  const maximizeWindow = useCallback((id: string) => {
+    setWindows(prev => prev.map(w => {
+      if (w.id !== id) return w;
+      if (w.state === 'maximized') {
+        return { ...w, state: 'normal', ...(w.prevRect ?? {}) };
+      }
+      return { ...w, state: 'maximized', prevRect: { x: w.x, y: w.y, width: w.width, height: w.height } };
+    }));
+  }, []);
+
+  const toggleWindow = useCallback((id: string) => {
+    setWindows(prev => {
+      const win = prev.find(w => w.id === id);
+      if (!win) return prev;
+      if (win.state === 'minimized') {
+        return prev.map(w => w.id === id ? { ...w, state: 'normal', zIndex: nextZ() } : w);
+      }
+      if (id === activeWindowId) {
+        return prev.map(w => w.id === id ? { ...w, state: 'minimized' } : w);
+      }
+      return prev.map(w => w.id === id ? { ...w, zIndex: nextZ() } : w);
+    });
+    setActiveWindowId(prev => {
+      const win = windows.find(w => w.id === id);
+      if (win?.state === 'minimized') return id;
+      if (prev === id) return null;
+      return id;
+    });
+  }, [activeWindowId, windows]);
+
+  const moveWindow = useCallback((id: string, x: number, y: number) => {
+    setWindows(prev => prev.map(w => w.id === id ? { ...w, x, y } : w));
+  }, []);
+
+  const resizeWindow = useCallback((id: string, x: number, y: number, width: number, height: number) => {
+    setWindows(prev => prev.map(w => w.id === id ? { ...w, x, y, width, height } : w));
+  }, []);
+
+  const updateWindowTitle = useCallback((id: string, title: string) => {
+    setWindows(prev => prev.map(w => w.id === id ? { ...w, title } : w));
+  }, []);
+
+  // ── Supabase auth ────────────────────────────────────────────────────────
   const fetchAllFromSupabase = async (userId: string) => {
     const { data: n } = await supabase.from('notes').select('*').eq('user_id', userId);
     const { data: e } = await supabase.from('calendar_events').select('*').eq('user_id', userId);
     const { data: g } = await supabase.from('genres').select('*').eq('user_id', userId);
-    return { 
-      remoteNotes: (n || []) as any as Note[], 
-      remoteEvents: (e || []) as any as CalendarEvent[], 
-      remoteGenres: (g || []) as any as Genre[] 
+    return {
+      remoteNotes: (n || []) as any as Note[],
+      remoteEvents: (e || []) as any as CalendarEvent[],
+      remoteGenres: (g || []) as any as Genre[]
     };
   };
 
   const syncData = async (currentUser: User) => {
-    // データの取得
     const { remoteNotes, remoteEvents, remoteGenres } = await fetchAllFromSupabase(currentUser.id);
-
     setNotes(current => {
       const merged = [...current];
       remoteNotes.forEach(rn => {
@@ -84,8 +149,6 @@ export function useAppState() {
         if (idx === -1) merged.push(rn);
         else if (rn.updatedAt > merged[idx].updatedAt) merged[idx] = rn;
       });
-
-      // 同期が必要な項目をプッシュ
       const toPush = merged.filter(n => {
         const rn = remoteNotes.find(r => r.id === n.id);
         return !rn || n.updatedAt > (rn.updatedAt || 0);
@@ -93,16 +156,13 @@ export function useAppState() {
       if (toPush.length > 0) supabase.from('notes').upsert(toPush.map(n => ({ ...n, user_id: currentUser.id }))).then();
       return merged;
     });
-
     setCalendarEvents(current => {
       const merged = [...current];
-
       remoteEvents.forEach(re => {
         const idx = merged.findIndex(e => e.id === re.id);
         if (idx === -1) merged.push(re);
         else if (re.updatedAt > merged[idx].updatedAt) merged[idx] = re;
       });
-
       const toPush = merged.filter(e => {
         const re = remoteEvents.find(r => r.id === e.id);
         return !re || e.updatedAt > (re.updatedAt || 0);
@@ -110,16 +170,13 @@ export function useAppState() {
       if (toPush.length > 0) supabase.from('calendar_events').upsert(toPush.map(e => ({ ...e, user_id: currentUser.id }))).then();
       return merged;
     });
-
     setGenres(current => {
       const merged = [...current];
-
       remoteGenres.forEach(rg => {
         const idx = merged.findIndex(g => g.id === rg.id);
         if (idx === -1) merged.push(rg);
         else if (rg.updatedAt > merged[idx].updatedAt) merged[idx] = rg;
       });
-
       const toPush = merged.filter(g => {
         const rg = remoteGenres.find(r => r.id === g.id);
         return !rg || g.updatedAt > (rg.updatedAt || 0);
@@ -131,146 +188,102 @@ export function useAppState() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        // リフレッシュトークン期限切れ等の場合は静かにサインアウトしてローカルセッションをクリア
-        console.warn('[Auth] セッション取得失敗、ローカルセッションをクリアします:', error.message);
-        supabase.auth.signOut().catch(() => {});
-        setUser(null);
-        return;
-      }
+      if (error) { supabase.auth.signOut().catch(() => {}); setUser(null); return; }
       setUser(session?.user ?? null);
       if (session?.user) syncData(session.user);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) syncData(session.user);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── リアルタイム同期（リスナー） ───────────────────────────────────────────
+  // ── リアルタイム同期 ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
-
     const channel = supabase.channel('realtime-sync')
-      // ノートの監視
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notes' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notes' }, payload => {
         const newData = payload.new as Note;
-        setNotes(current => {
-          const idx = current.findIndex(n => n.id === newData.id);
-          if (idx !== -1) return current; // 既に存在する
-          return [...current, newData];
-        });
+        setNotes(current => current.findIndex(n => n.id === newData.id) !== -1 ? current : [...current, newData]);
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes' }, (payload) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes' }, payload => {
         const newData = payload.new as Note;
         setNotes(current => {
           const idx = current.findIndex(n => n.id === newData.id);
           if (idx === -1) return [...current, newData];
           if (newData.updatedAt > (current[idx].updatedAt || 0)) {
-            const next = [...current];
-            next[idx] = newData;
-            return next;
+            const next = [...current]; next[idx] = newData; return next;
           }
           return current;
         });
       })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'notes' }, (payload) => {
-        // 他デバイスで削除されたノートをリアルタイムで除去
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'notes' }, payload => {
         const deletedId = (payload.old as { id?: string }).id;
         if (deletedId) setNotes(current => current.filter(n => n.id !== deletedId));
       })
-      // カレンダーイベントの監視
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as CalendarEvent;
           setCalendarEvents(current => {
             const idx = current.findIndex(e => e.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
-              const next = [...current];
-              next[idx] = newData;
-              return next;
+              const next = [...current]; next[idx] = newData; return next;
             }
             return current;
           });
         }
       })
-      // ジャンルの監視
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'genres' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'genres' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const newData = payload.new as Genre;
           setGenres(current => {
             const idx = current.findIndex(g => g.id === newData.id);
             if (idx === -1) return [...current, newData];
             if (newData.updatedAt > (current[idx].updatedAt || 0)) {
-              const next = [...current];
-              next[idx] = newData;
-              return next;
+              const next = [...current]; next[idx] = newData; return next;
             }
             return current;
           });
         }
       })
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [user]);
 
-  // ── 削除クリーナー（不要になったため削除） ──────────────────────────────────
-
-  // ── localStorage 初期ロード ─────────────────────────────────────────────────
+  // ── localStorage ─────────────────────────────────────────────────────────
   useEffect(() => {
     try {
       const savedNotes  = localStorage.getItem('hybrid-memo-notes');
-      const savedTabs   = localStorage.getItem('hybrid-memo-tabs');
       const savedWidth  = localStorage.getItem('hybrid-memo-sidebar-width');
       const savedEvents = localStorage.getItem('nemo-calendar-events');
       const savedGenres = localStorage.getItem('nemo-calendar-genres');
       const savedTheme  = localStorage.getItem('hybrid-memo-theme');
-
-      if (savedNotes) setNotes(JSON.parse(savedNotes));
-      if (savedTabs) {
-        const { openedTabs: tabs, activeTabId: tabId } = JSON.parse(savedTabs);
-        if (tabs) setOpenedTabs(tabs);
-        if (tabId !== undefined) setActiveTabId(tabId);
-      }
-      if (savedWidth) setSidebarWidth(parseInt(savedWidth, 10));
+      if (savedNotes)  setNotes(JSON.parse(savedNotes));
       if (savedEvents) setCalendarEvents(JSON.parse(savedEvents));
-      if (savedTheme) setTheme(savedTheme as any);
-
-      if (savedGenres) {
-        setGenres(JSON.parse(savedGenres));
-      } else {
-        // デフォルトのジャンル
-        const defaults: Genre[] = [
-          { id: crypto.randomUUID(), name: '仕事', color: '#3b82f6', updatedAt: Date.now() },
+      if (savedTheme)  setTheme(savedTheme as any);
+      if (!savedGenres) {
+        setGenres([
+          { id: crypto.randomUUID(), name: '仕事',       color: '#3b82f6', updatedAt: Date.now() },
           { id: crypto.randomUUID(), name: 'プライベート', color: '#22c55e', updatedAt: Date.now() },
-          { id: crypto.randomUUID(), name: '重要', color: '#ef4444', updatedAt: Date.now() },
-          { id: crypto.randomUUID(), name: 'その他', color: '#6b7280', updatedAt: Date.now() },
-        ];
-        setGenres(defaults);
+          { id: crypto.randomUUID(), name: '重要',       color: '#ef4444', updatedAt: Date.now() },
+          { id: crypto.randomUUID(), name: 'その他',     color: '#6b7280', updatedAt: Date.now() },
+        ]);
+      } else {
+        setGenres(JSON.parse(savedGenres));
       }
-    } catch (e) {
-      console.warn('Failed to load from localStorage', e);
-    }
+      void savedWidth;
+    } catch (e) { console.warn('Failed to load from localStorage', e); }
     setIsLoaded(true);
   }, []);
 
-  // ── localStorage 保存 ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!isLoaded) return;
     localStorage.setItem('hybrid-memo-notes', JSON.stringify(notes));
-    localStorage.setItem('hybrid-memo-tabs', JSON.stringify({ openedTabs, activeTabId }));
-    localStorage.setItem('hybrid-memo-sidebar-width', sidebarWidth.toString());
     localStorage.setItem('hybrid-memo-theme', theme);
-  }, [notes, isLoaded, openedTabs, activeTabId, sidebarWidth, theme]);
+  }, [notes, isLoaded, theme]);
 
-  // カレンダーイベントを独立したエフェクトで保存（ノートと同期）
   useEffect(() => {
     if (!isLoaded) return;
     localStorage.setItem('nemo-calendar-events', JSON.stringify(calendarEvents));
@@ -279,35 +292,11 @@ export function useAppState() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    localStorage.clear(); // 簡易的にローカルキャッシュも消去（お試し用）
+    localStorage.clear();
     window.location.reload();
   };
 
-  // ── タブ操作 ────────────────────────────────────────────────────────────────
-  const activateNote = (id: string | null, fallbackTitle: string = 'WORKSPACE') => {
-    const title =
-      id === null           ? 'WORKSPACE' :
-      id === '__calendar__' ? '📅 カレンダー' :
-      (notes.find(n => n.id === id)?.title || fallbackTitle || '無題');
-    setOpenedTabs(prev => {
-      if (!prev.find(t => t.id === id)) return [...prev, { id, title }];
-      return prev.map(t => (t.id === id ? { ...t, title } : t));
-    });
-    setActiveTabId(id);
-  };
-
-  const closeTab = (e: React.MouseEvent, id: string | null) => {
-    e.stopPropagation();
-    setOpenedTabs(prev => {
-      const newTabs = prev.filter(t => t.id !== id);
-      if (id === activeTabId) {
-        setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
-      }
-      return newTabs.length === 0 ? [{ id: null, title: 'WORKSPACE' }] : newTabs;
-    });
-  };
-
-  // ── デイリーノート保存 ──────────────────────────────────────────────────────
+  // ── Note CRUD ────────────────────────────────────────────────────────────
   const handleDailySave = async () => {
     if (!dailyContent.trim()) return;
     const today = getTodayString();
@@ -316,55 +305,41 @@ export function useAppState() {
     const yearNode  = getOrCreateFolder(updatedNotes, yyyy, null);
     const monthNode = getOrCreateFolder(updatedNotes, mm, yearNode.id);
     const newNote: Note = {
-      id: crypto.randomUUID(),
-      title: dd,
-      content: dailyContent,
-      parentId: monthNode.id,
-      updatedAt: Date.now(),
-      type: 'daily',
-      color: dailyColor,
+      id: crypto.randomUUID(), title: dd, content: dailyContent,
+      parentId: monthNode.id, updatedAt: Date.now(), type: 'daily', color: dailyColor,
     };
     updatedNotes.push(newNote);
     setNotes(updatedNotes);
-
     if (user) {
-      // フォルダ構造も一緒にアップロード
       const toUpsert = [yearNode, monthNode, newNote].map(n => ({ ...n, user_id: user.id }));
       await supabase.from('notes').upsert(toUpsert);
     }
-
     setDailyContent('');
-    activateNote(null);
   };
 
-  // ── 新規ノート作成 ──────────────────────────────────────────────────────────
   const handleCreateNewNote = async (type: 'document' | 'board' = 'document', parentId?: string | null) => {
-    const actualParentId = parentId !== undefined ? parentId : (activeTabId && activeTabId !== '__calendar__' ? activeTabId : null);
+    const actualParentId = parentId !== undefined ? parentId : null;
     const siblings = notes.filter(n => n.parentId === actualParentId);
     const maxOrder = siblings.reduce((max, n) => Math.max(max, n.order_index ?? 0), 0);
     const newNote: Note = {
       id: crypto.randomUUID(),
-      title:   type === 'board' ? '無題のボード' : '無題のノート',
+      title: type === 'board' ? '無題のボード' : '無題のノート',
       content: type === 'board' ? JSON.stringify({ strokes: [], nodes: [], edges: [] }) : '',
-      parentId: actualParentId,
-      updatedAt: Date.now(),
-      type,
+      parentId: actualParentId, updatedAt: Date.now(), type,
       order_index: siblings.length > 0 ? maxOrder + 100 : 0,
     };
     setNotes(prev => [...prev, newNote]);
     if (user) await supabase.from('notes').upsert({ ...newNote, user_id: user.id });
-    activateNote(newNote.id, newNote.title);
+    openWindow(newNote.id, newNote.title, type);
     return newNote;
   };
 
-  // ── タイトル / コンテンツ更新 ───────────────────────────────────────────────
   const handleUpdateTitle = async (id: string, title: string) => {
     const note = notes.find(n => n.id === id);
     if (!note) return;
     const updated = { ...note, title, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
-    // タブのタイトルも更新
-    setOpenedTabs(prev => prev.map(t => (t.id === id ? { ...t, title: title || '無題' } : t)));
+    setNotes(prev => prev.map(n => n.id === id ? updated : n));
+    updateWindowTitle(id, title || '無題');
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
@@ -372,7 +347,7 @@ export function useAppState() {
     const note = notes.find(n => n.id === id);
     if (!note) return;
     const updated = { ...note, content, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
+    setNotes(prev => prev.map(n => n.id === id ? updated : n));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
@@ -380,95 +355,64 @@ export function useAppState() {
     const note = notes.find(n => n.id === id);
     if (!note) return;
     const updated = { ...note, color, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
+    setNotes(prev => prev.map(n => n.id === id ? updated : n));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
   const handleMoveNote = async (id: string, newParentId: string | null, targetId?: string, position?: 'above' | 'below' | 'inside') => {
     const noteToMove = notes.find(n => n.id === id);
     if (!noteToMove) return;
-
     let finalParentId = newParentId;
     let newOrderIndex = 0;
-
     if (targetId && position && position !== 'inside') {
       const targetNote = notes.find(n => n.id === targetId);
       if (targetNote) {
         finalParentId = targetNote.parentId;
-        const siblings = notes
-          .filter(n => n.parentId === targetNote.parentId && n.id !== id && !n.is_deleted)
+        const siblings = notes.filter(n => n.parentId === targetNote.parentId && n.id !== id && !n.is_deleted)
           .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-        
         const targetIndex = siblings.findIndex(n => n.id === targetId);
-        
         if (targetIndex !== -1) {
           if (position === 'above') {
             const prev = targetIndex > 0 ? (siblings[targetIndex - 1].order_index ?? 0) : null;
             const current = siblings[targetIndex].order_index ?? 0;
             newOrderIndex = prev === null ? current - 100 : (prev + current) / 2;
-          } else if (position === 'below') {
+          } else {
             const next = targetIndex < siblings.length - 1 ? (siblings[targetIndex + 1].order_index ?? 0) : null;
             const current = siblings[targetIndex].order_index ?? 0;
             newOrderIndex = next === null ? current + 100 : (current + next) / 2;
           }
-        } else {
-          newOrderIndex = targetNote.order_index ?? 0;
-        }
+        } else { newOrderIndex = targetNote.order_index ?? 0; }
       }
     } else {
       const siblings = notes.filter(n => n.parentId === newParentId && n.id !== id && !n.is_deleted);
       const maxOrder = siblings.reduce((max, n) => Math.max(max, n.order_index ?? 0), 0);
       newOrderIndex = siblings.length > 0 ? maxOrder + 100 : 0;
     }
-
     const updated = { ...noteToMove, parentId: finalParentId, order_index: newOrderIndex, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
+    setNotes(prev => prev.map(n => n.id === id ? updated : n));
     if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
   };
 
-  // ── 再帰削除 ────────────────────────────────────────────────────────────────
   const handleDeleteNote = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('このノートを削除しますか？紐づく子ノートも全て削除されます。')) return;
-
     const idsToDelete = new Set<string>([id]);
     const queue = [id];
     while (queue.length > 0) {
       const current = queue.pop()!;
-      notes.filter(n => n.parentId === current).forEach(n => {
-        idsToDelete.add(n.id);
-        queue.push(n.id);
-      });
+      notes.filter(n => n.parentId === current).forEach(n => { idsToDelete.add(n.id); queue.push(n.id); });
     }
-
     const idArray = Array.from(idsToDelete);
     const now = Date.now();
-
-    // ローカル状態を論理削除（is_deleted: true）に更新
     setNotes(prev => prev.map(n => idsToDelete.has(n.id) ? { ...n, is_deleted: true, updatedAt: now } : n));
-
-    // Supabase に論理削除を反映 (upsert)
     if (user) {
-      const updates = idArray.map(id => {
-        const note = notes.find(n => n.id === id);
-        return { ...note, id, is_deleted: true, updatedAt: now, user_id: user.id };
-      });
+      const updates = idArray.map(id => { const note = notes.find(n => n.id === id); return { ...note, id, is_deleted: true, updatedAt: now, user_id: user.id }; });
       const { error } = await supabase.from('notes').upsert(updates);
       if (error) setLastError(`Delete note error: ${error.message}`);
     }
-
-    let shouldGoHome = false;
-    setOpenedTabs(prev => {
-      const newTabs = prev.filter(t => t.id === null || !idsToDelete.has(t.id));
-      if (activeTabId && idsToDelete.has(activeTabId)) shouldGoHome = true;
-      return newTabs.length === 0 ? [{ id: null, title: 'WORKSPACE' }] : newTabs;
-    });
-    if (shouldGoHome || (activeTabId && idsToDelete.has(activeTabId))) {
-      setActiveTabId(null);
-    }
+    idsToDelete.forEach(did => closeWindow(did));
   };
 
-  // ── D&D 循環チェック ────────────────────────────────────────────────────────
   const isDescendant = (nodeId: string, targetId: string): boolean => {
     let currentId: string | null = targetId;
     while (currentId !== null) {
@@ -478,62 +422,30 @@ export function useAppState() {
     return false;
   };
 
-  // ── Computed ────────────────────────────────────────────────────────────────
+  // ── Computed ─────────────────────────────────────────────────────────────
   const todayTitle = getTodayString();
   const [yyyy, mm, dd] = todayTitle.split('-');
-
   const yearFolder  = notes.find(n => n.parentId === null && n.title === yyyy && !n.is_deleted);
-  const monthFolder = yearFolder
-    ? notes.find(n => n.parentId === yearFolder.id && n.title === mm && !n.is_deleted)
-    : null;
-  const hasWrittenToday = monthFolder
-    ? notes.some(n => n.parentId === monthFolder.id && (n.title === dd || n.title === todayTitle) && !n.is_deleted)
-    : false;
+  const monthFolder = yearFolder ? notes.find(n => n.parentId === yearFolder.id && n.title === mm && !n.is_deleted) : null;
+  const hasWrittenToday = monthFolder ? notes.some(n => n.parentId === monthFolder.id && (n.title === dd || n.title === todayTitle) && !n.is_deleted) : false;
+  const rootNotes = notes.filter(n => n.parentId === null && !n.is_deleted);
 
-  const isCalendarTab = activeTabId === '__calendar__';
-  const activeNote  = activeTabId && !isCalendarTab ? notes.find(n => n.id === activeTabId && !n.is_deleted) ?? null : null;
-  const rootNotes   = notes.filter(n => n.parentId === null && !n.is_deleted);
-  const childNotes  = activeTabId && !isCalendarTab ? notes.filter(n => n.parentId === activeTabId && !n.is_deleted) : [];
-
-  // ── デイリーノートを開く or 作成 ────────────────────────────────────────────
   const openOrCreateDailyNote = (dateStr: string) => {
-    const [yyyy, mm, dd] = dateStr.split('-');
-
-    const findNote = (currentNotes: Note[]) => {
-      const yearFolder  = currentNotes.find(n => n.parentId === null && n.title === yyyy && !n.is_deleted);
-      if (!yearFolder) return null;
-      const monthFolder = currentNotes.find(n => n.parentId === yearFolder.id && n.title === mm && !n.is_deleted);
-      if (!monthFolder) return null;
-      return currentNotes.find(n => n.parentId === monthFolder.id && (n.title === dd || n.title === dateStr) && !n.is_deleted) ?? null;
-    };
-
-    const existing = findNote(notes);
-    if (existing) {
-      setActivePanel('files');
-      activateNote(existing.id, existing.title);
-      return;
-    }
-
+    const [y, mo, d] = dateStr.split('-');
+    const yf = notes.find(n => n.parentId === null && n.title === y && !n.is_deleted);
+    const mf = yf ? notes.find(n => n.parentId === yf.id && n.title === mo && !n.is_deleted) : null;
+    const existing = mf ? notes.find(n => n.parentId === mf.id && (n.title === d || n.title === dateStr) && !n.is_deleted) : null;
+    if (existing) { openWindow(existing.id, existing.title, 'daily'); return; }
     let updatedNotes = [...notes];
-    const yearNode  = getOrCreateFolder(updatedNotes, yyyy, null);
-    const monthNode = getOrCreateFolder(updatedNotes, mm, yearNode.id);
-    const newNote: Note = {
-      id: crypto.randomUUID(),
-      title: dd,
-      content: '',
-      parentId: monthNode.id,
-      updatedAt: Date.now(),
-      type: 'daily',
-    };
+    const yearNode  = getOrCreateFolder(updatedNotes, y, null);
+    const monthNode = getOrCreateFolder(updatedNotes, mo, yearNode.id);
+    const newNote: Note = { id: crypto.randomUUID(), title: d, content: '', parentId: monthNode.id, updatedAt: Date.now(), type: 'daily' };
     updatedNotes.push(newNote);
     setNotes(updatedNotes);
-    setActivePanel('files');
-    setOpenedTabs(prev => [...prev, { id: newNote.id, title: newNote.title }]);
-    setActiveTabId(newNote.id);
+    openWindow(newNote.id, newNote.title, 'daily');
   };
 
   return {
-    // state
     notes: notes.filter(n => !n.is_deleted),
     setNotes,
     dailyContent, setDailyContent,
@@ -541,43 +453,27 @@ export function useAppState() {
     isLoaded, user, lastError,
     searchQuery, setSearchQuery,
     activePanel, setActivePanel,
-    openedTabs, activeTabId,
     draggedNodeId, setDraggedNodeId,
-    sidebarWidth, isResizing, setIsResizing,
     calendarEvents: calendarEvents.filter(e => !e.is_deleted),
     genres: genres.filter(g => !g.is_deleted),
     setCalendarEvents: async (events: CalendarEvent[]) => {
-      // 注意: この関数は更新のみを扱うように整理
       setCalendarEvents(events);
       if (user) await supabase.from('calendar_events').upsert(events.map(e => ({ ...e, user_id: user.id })));
     },
     handleDeleteEvent: async (id: string, date?: string, mode: 'only' | 'following' | 'all' = 'all') => {
       const target = calendarEvents.find(e => e.id === id);
       if (!target) return;
-
       const now = Date.now();
       if (mode === 'all') {
         const updated = { ...target, is_deleted: true, updatedAt: now };
         setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
-        if (user) {
-          const { error } = await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
-          if (error) setLastError(`Delete event error: ${error.message}`);
-        }
+        if (user) { const { error } = await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id }); if (error) setLastError(`Delete event error: ${error.message}`); }
       } else if (mode === 'only' && date) {
-        const excluded = target.excludedDates || [];
-        const updated = { ...target, excludedDates: [...excluded, date], updatedAt: Date.now() };
+        const updated = { ...target, excludedDates: [...(target.excludedDates || []), date], updatedAt: Date.now() };
         setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
         if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
       } else if (mode === 'following' && date) {
-        const updated = { 
-          ...target, 
-          recurrence: target.recurrence ? { 
-            ...target.recurrence, 
-            endType: 'date' as const, 
-            endDate: date 
-          } : undefined, 
-          updatedAt: Date.now() 
-        };
+        const updated = { ...target, recurrence: target.recurrence ? { ...target.recurrence, endType: 'date' as const, endDate: date } : undefined, updatedAt: Date.now() };
         setCalendarEvents(prev => prev.map(e => e.id === id ? updated : e));
         if (user) await supabase.from('calendar_events').upsert({ ...updated, user_id: user.id });
       }
@@ -597,16 +493,18 @@ export function useAppState() {
     },
     theme, setTheme,
     handleLogout,
-    // handlers
-    activateNote, closeTab,
+    // window system
+    windows, activeWindowId,
+    openWindow, closeWindow, minimizeWindow, maximizeWindow, toggleWindow,
+    focusWindow, moveWindow, resizeWindow,
+    // note handlers
     handleDailySave, handleCreateNewNote,
     handleUpdateTitle, handleUpdateContent, handleDeleteNote,
     handleMoveNote, updateNoteColor,
-    isDescendant,
-    openOrCreateDailyNote,
+    isDescendant, openOrCreateDailyNote,
     // computed
-    todayTitle, hasWrittenToday,
-    shouldShowDailyEditor: activeTabId === null && !hasWrittenToday,
-    activeNote, rootNotes, childNotes,
+    todayTitle, hasWrittenToday, rootNotes,
+    // legacy compat (used inside handlers)
+    activateNote: openWindow,
   };
 }
