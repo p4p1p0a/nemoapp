@@ -8,6 +8,7 @@ interface BlockEditorProps {
   updateContent: (c: string) => void;
   notes: Note[];
   activateNote: (id: string | null, fallbackTitle?: string) => void;
+  onSearchTag?: (tag: string) => void;
 }
 
 // YouTube URL を角括弧で囲った埋め込みブロックを検出し、テキストブロックと交互に分割するエディタ
@@ -16,6 +17,7 @@ export const BlockEditor = ({
   updateContent,
   notes,
   activateNote,
+  onSearchTag,
 }: BlockEditorProps) => {
   const regex =
     /(\[(?:https?:\/\/(?:www\.)?youtube\.com\/(?:watch\?v=|embed\/)[a-zA-Z0-9_-]+|https?:\/\/youtu\.be\/[a-zA-Z0-9_-]+)\])/gi;
@@ -78,6 +80,7 @@ export const BlockEditor = ({
             }
             notes={notes}
             onNavigate={onNavigate}
+            onSearchTag={onSearchTag}
           />
         );
       })}

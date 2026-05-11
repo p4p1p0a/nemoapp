@@ -8,11 +8,13 @@ import InfiniteBoard from "./components/InfiniteBoard";
 import Calendar from "./components/Calendar";
 import AppWindow from "./components/AppWindow";
 import Taskbar from "./components/Taskbar";
+import { DailyEditor } from "./components/DailyEditor";
 
 export default function Home() {
   const {
     notes, setNotes, isLoaded,
     dailyContent, setDailyContent,
+    dailyColor, setDailyColor,
     searchQuery, setSearchQuery,
     activePanel, setActivePanel,
     draggedNodeId, setDraggedNodeId,
@@ -22,12 +24,16 @@ export default function Home() {
     rootNotes,
     calendarEvents, setCalendarEvents, handleDeleteEvent,
     genres, setGenres, handleDeleteGenre,
+    todayTitle, hasWrittenToday, handleDailySave, handleUpdateEmoji,
     theme, setTheme,
     user, handleLogout, lastError,
     windows, activeWindowId,
     openWindow, closeWindow, minimizeWindow, maximizeWindow, toggleWindow,
     focusWindow, moveWindow, resizeWindow,
+    desktopShortcuts, setDesktopShortcuts,
   } = useAppState();
+
+  const [draggingShortcutId, setDraggingShortcutId] = useState<string | null>(null);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -40,6 +46,10 @@ export default function Home() {
   };
   const hideSidebar = () => {
     sidebarTimerRef.current = setTimeout(() => setSidebarVisible(false), 400);
+  };
+  const toggleSidebar = () => {
+    if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
+    setSidebarVisible(prev => !prev);
   };
 
   if (!isLoaded) return <div className="min-h-screen" style={{ background: 'hsl(225,55%,14%)' }} />;
@@ -84,6 +94,10 @@ export default function Home() {
             handleUpdateTitle={(title) => handleUpdateTitle(note.id, title)}
             handleUpdateContent={(content) => handleUpdateContent(note.id, content)}
             handleDeleteNote={handleDeleteNote}
+            onSearchTag={(tag) => {
+              setSearchQuery('#' + tag);
+              showSidebar();
+            }}
           />
         </div>
       </div>
@@ -95,7 +109,66 @@ export default function Home() {
       data-theme={theme}
       className="w-screen h-screen overflow-hidden relative select-none"
       style={{ background: 'linear-gradient(135deg, hsl(225,55%,12%) 0%, hsl(230,50%,16%) 100%)' }}
+      onPointerMove={e => {
+        if (draggingShortcutId) {
+          setDesktopShortcuts(prev => prev.map(s => s.id === draggingShortcutId ? { ...s, x: s.x + e.movementX, y: s.y + e.movementY } : s));
+        }
+      }}
+      onPointerUp={() => setDraggingShortcutId(null)}
+      onPointerLeave={() => setDraggingShortcutId(null)}
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => {
+        const noteId = e.dataTransfer.getData("application/nemo-note-id");
+        if (noteId) {
+          e.preventDefault();
+          if (!desktopShortcuts.some(s => s.noteId === noteId)) {
+            setDesktopShortcuts(prev => [...prev, {
+              id: crypto.randomUUID(),
+              noteId,
+              x: e.clientX,
+              y: e.clientY
+            }]);
+          }
+        }
+      }}
     >
+      {/* Desktop Shortcuts */}
+      {desktopShortcuts.map(sc => {
+        const note = notes.find(n => n.id === sc.noteId);
+        if (!note) return null;
+        const icon = note.emoji || (note.type === 'board' ? '🎨' : '📄');
+        return (
+          <div
+            key={sc.id}
+            className={`absolute flex flex-col items-center gap-1 p-2 rounded-xl transition-all group ${draggingShortcutId === sc.id ? 'opacity-70' : 'hover:bg-white/10'}`}
+            style={{ left: sc.x - 40, top: sc.y - 40, width: 80 }}
+            onPointerDown={e => {
+              if (e.button === 2) { // Right click to delete
+                if (confirm('デスクトップからこのショートカットを削除しますか？（ノート自体は削除されません）')) {
+                  setDesktopShortcuts(prev => prev.filter(s => s.id !== sc.id));
+                }
+                return;
+              }
+              setDraggingShortcutId(sc.id);
+            }}
+            onDoubleClick={e => {
+              e.stopPropagation();
+              openWindow(note.id, note.title, note.type);
+            }}
+            onContextMenu={e => e.preventDefault()}
+            title="ダブルクリックで開く / 右クリックで削除"
+          >
+            <div className="w-12 h-12 flex items-center justify-center text-3xl bg-black/40 backdrop-blur-md rounded-2xl shadow-lg border border-white/10 group-hover:scale-105 transition-transform pointer-events-none">
+              {icon}
+            </div>
+            <div className="w-full text-center pointer-events-none">
+              <span className="text-[11px] font-medium text-white/90 leading-tight line-clamp-2 px-1 break-words drop-shadow-md" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+                {note.title || '無題'}
+              </span>
+            </div>
+          </div>
+        );
+      })}
       {/* Error indicator */}
       {lastError && (
         <div className="fixed bottom-16 right-4 z-[9999] bg-black/80 backdrop-blur-md border border-red-500/50 rounded-lg p-3 text-[10px] font-mono text-red-100 pointer-events-none">
@@ -107,12 +180,13 @@ export default function Home() {
         </div>
       )}
 
-      {/* Left hover zone */}
-      <div
-        className="fixed left-0 top-0 bottom-12 w-4 z-[1000]"
-        onMouseEnter={showSidebar}
-        onMouseLeave={hideSidebar}
-      />
+      {/* Left hover zone (only active when sidebar is hidden) */}
+      {!sidebarVisible && (
+        <div
+          className="fixed left-0 top-0 bottom-12 w-4 z-[1000]"
+          onMouseEnter={showSidebar}
+        />
+      )}
 
       {/* Sidebar overlay */}
       <div
@@ -138,28 +212,6 @@ export default function Home() {
             >👤</button>
             <button onClick={() => setIsSettingsOpen(true)} className="w-7 h-7 rounded-lg flex items-center justify-center text-sm text-white/40 hover:bg-white/10 transition-all">⚙️</button>
           </div>
-
-          {/* Create buttons */}
-          <div className="px-3 py-3 flex gap-2">
-            <button onClick={() => handleCreateNewNote('document')} className="flex-1 flex items-center justify-center gap-1 bg-white/8 hover:bg-white/15 text-white/70 hover:text-white text-xs py-2 px-2 rounded-lg transition-all border border-white/5">
-              <span>＋</span> ページ
-            </button>
-            <button onClick={() => handleCreateNewNote('board')} className="flex-1 flex items-center justify-center gap-1 bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-xs py-2 px-2 rounded-lg transition-all border border-blue-500/15">
-              <span>🎨</span> ボード
-            </button>
-          </div>
-
-          {/* Search */}
-          <div className="px-3 pb-2">
-            <input
-              type="search"
-              placeholder="🔍 検索..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-xs text-white/70 placeholder:text-white/25 outline-none focus:border-white/25 transition-colors"
-            />
-          </div>
-
           {/* Tree */}
           <div className="flex-1 overflow-y-auto">
             <Sidebar
@@ -178,6 +230,7 @@ export default function Home() {
               handleDeleteNote={handleDeleteNote}
               handleRenameNote={handleUpdateTitle}
               handleMoveNote={handleMoveNote}
+              handleUpdateEmoji={handleUpdateEmoji}
             />
           </div>
         </div>
@@ -204,6 +257,7 @@ export default function Home() {
         windows={windows}
         onToggle={toggleWindow}
         activeWindowId={activeWindowId}
+        onToggleSidebar={toggleSidebar}
       />
 
       {/* Settings modal */}
@@ -239,6 +293,22 @@ export default function Home() {
       )}
 
       {isAuthOpen && <AuthModal onClose={() => setIsAuthOpen(false)} />}
+
+      {/* Mandatory Daily Editor Overlay */}
+      {isLoaded && !hasWrittenToday && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md">
+          <div className="bg-[#12121a] border border-white/10 rounded-2xl shadow-2xl p-8 w-[800px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
+            <DailyEditor
+              todayTitle={todayTitle}
+              dailyContent={dailyContent}
+              setDailyContent={setDailyContent}
+              dailyColor={dailyColor}
+              setDailyColor={setDailyColor}
+              handleDailySave={handleDailySave}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

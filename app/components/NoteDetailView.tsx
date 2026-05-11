@@ -85,6 +85,7 @@ interface NoteDetailViewProps {
   handleUpdateTitle: (title: string) => void;
   handleUpdateContent: (content: string) => void;
   handleDeleteNote: (id: string, e: React.MouseEvent) => void;
+  onSearchTag?: (tag: string) => void;
 }
 
 export const NoteDetailView = ({
@@ -95,6 +96,7 @@ export const NoteDetailView = ({
   handleUpdateTitle,
   handleUpdateContent,
   handleDeleteNote,
+  onSearchTag,
 }: NoteDetailViewProps) => {
   const backlinks = notes.filter(
     n => n.id !== activeNote.id && n.content.includes(`[[${activeNote.title}]]`)
@@ -143,6 +145,7 @@ export const NoteDetailView = ({
           updateContent={handleUpdateContent}
           notes={notes}
           activateNote={activateNote}
+          onSearchTag={onSearchTag}
         />
       </section>
 

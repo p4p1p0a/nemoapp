@@ -16,15 +16,56 @@ interface SidebarNodeProps {
   onRename?: (id: string, title: string) => void;
   onMove?: (id: string, parentId: string | null, targetId?: string, position?: 'above' | 'below' | 'inside') => void;
   onCreateChild?: (parentId: string, type: 'document' | 'board') => void;
+  onUpdateEmoji?: (id: string, emoji: string) => void;
 }
+
+const COMMON_EMOJIS = [
+  "😀","😁","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😋","😛",
+  "😎","🤓","🧐","🥳","🤩","🤯","😱","🥶","🥵","🤬","👿","💀","👽","👾","🤖",
+  "👋","👍","👎","👏","🙌","👐","🤲","🤝","🙏","✍️","🧠","👀","🔥","✨","🌟",
+  "💡","💣","🎉","🎈","❤️","🧡","💛","💚","💙","💜","🖤","💔","💯","💢","💬",
+  "🐶","🐱","🐭","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔",
+  "🍎","🍏","🍊","🍋","🍌","🍉","🍇","🍓","🍈","🍒","🍑","🥭","🍍","🥥","🥝",
+  "⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🎱","🏓","🏸","🥅","🏒","🏑","🥍",
+  "🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🦯",
+  "⌚","📱","📲","💻","⌨️","🖥️","🖨️","🖱️","🖲️","🕹️","🗜️","💽","💾","💿","📀",
+  "📁","📂","📃","📄","📅","📆","📇","📈","📉","📊","📋","📌","📍","📎","📏",
+  "🎨","📓","📝","✏️","🖋️","🔍","🔔","🎵","🎧","🎮","🎲","🧩","🧸","🪄"
+];
+
+const EmojiPicker = ({ x, y, onSelect, onClose }: { x: number, y: number, onSelect: (e: string) => void, onClose: () => void }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const safeX = Math.min(x, window.innerWidth - 230);
+  const safeY = Math.min(y, window.innerHeight - 300);
+
+  return (
+    <div ref={ref} className="fixed z-[300] w-[220px] bg-sidebar-bg/95 border border-border-color backdrop-blur-xl rounded-xl shadow-2xl p-2 flex flex-wrap gap-1 max-h-[250px] overflow-y-auto custom-scrollbar" style={{ top: safeY, left: safeX }} onMouseDown={e => e.stopPropagation()}>
+      <div className="w-full text-[10px] text-white/40 mb-1 px-1 flex justify-between items-center">
+        <span>絵文字を選択</span>
+        <button onClick={() => { onSelect(""); onClose(); }} className="hover:text-red-400 transition-colors">削除</button>
+      </div>
+      {COMMON_EMOJIS.map(e => (
+        <button key={e} onClick={() => { onSelect(e); onClose(); }} className="w-7 h-7 flex items-center justify-center hover:bg-white/10 rounded text-lg transition-transform hover:scale-125">
+          {e}
+        </button>
+      ))}
+    </div>
+  );
+};
 
 // ── コンテキストメニュー ───────────────────────────────────────────────────────
 const ContextMenu = ({
-  x, y, note, onClose, onRename, onDelete, onCreateDoc, onCreateBoard,
+  x, y, note, onClose, onRename, onDelete, onCreateDoc, onCreateBoard, onUpdateEmoji,
 }: {
   x: number; y: number; note: Note;
   onClose: () => void; onRename: () => void; onDelete: () => void;
-  onCreateDoc: () => void; onCreateBoard: () => void;
+  onCreateDoc: () => void; onCreateBoard: () => void; onUpdateEmoji: () => void;
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -71,6 +112,7 @@ const ContextMenu = ({
       </div>
 
       <Item icon="✏️" label="名前変更"           onClick={() => { onRename(); onClose(); }} />
+      <Item icon="😀" label="絵文字を変更"        onClick={() => { onUpdateEmoji(); onClose(); }} />
       <Item icon="📄" label="子ページを追加"      onClick={() => { onCreateDoc(); onClose(); }} />
       <Item icon="🎨" label="子ボードを追加"      onClick={() => { onCreateBoard(); onClose(); }} />
 
@@ -94,6 +136,7 @@ export const SidebarNode = ({
   onRename,
   onMove,
   onCreateChild,
+  onUpdateEmoji,
 }: SidebarNodeProps) => {
   const childrenNodes = notes.filter(n => n.parentId === note.id).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
   const isActive = note.id === activeTabId;
@@ -109,6 +152,9 @@ export const SidebarNode = ({
   const [renameValue, setRenameValue] = useState(note.title);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
+  // インライン絵文字変更
+  const [emojiPickerPos, setEmojiPickerPos] = useState<{ x: number; y: number } | null>(null);
+
   useEffect(() => {
     if (isRenaming && renameInputRef.current) {
       renameInputRef.current.focus();
@@ -122,6 +168,11 @@ export const SidebarNode = ({
       onRename?.(note.id, trimmed);
     }
     setIsRenaming(false);
+  };
+
+  const handleUpdateEmojiSelect = (emoji: string) => {
+    onUpdateEmoji?.(note.id, emoji);
+    setEmojiPickerPos(null);
   };
 
   // D&D
@@ -183,9 +234,19 @@ export const SidebarNode = ({
           note={note}
           onClose={() => setCtxMenu(null)}
           onRename={() => { setRenameValue(note.title); setIsRenaming(true); }}
+          onUpdateEmoji={() => { setEmojiPickerPos({ x: ctxMenu.x, y: ctxMenu.y }); }}
           onDelete={() => onDelete?.(note.id, { stopPropagation: () => {} } as any)}
           onCreateDoc={()   => onCreateChild?.(note.id, 'document')}
           onCreateBoard={() => onCreateChild?.(note.id, 'board')}
+        />
+      )}
+
+      {/* 絵文字ピッカー */}
+      {emojiPickerPos && (
+        <EmojiPicker
+          x={emojiPickerPos.x} y={emojiPickerPos.y}
+          onSelect={handleUpdateEmojiSelect}
+          onClose={() => setEmojiPickerPos(null)}
         />
       )}
 
@@ -209,13 +270,29 @@ export const SidebarNode = ({
       >
         {isDragOver && dropPosition === 'above' && <div className="absolute top-0 left-0 right-0 h-0.5 bg-blue-400 z-50 rounded shadow-[0_0_8px_rgba(96,165,250,0.8)]" />}
         {isDragOver && dropPosition === 'below' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-400 z-50 rounded shadow-[0_0_8px_rgba(96,165,250,0.8)]" />}
-        <div
-          className="w-5 h-5 flex items-center justify-center text-[10px] text-white/30 hover:bg-white/10 rounded transition-colors"
-          onClick={toggleOpen}
-        >
-          {childrenNodes.length > 0
-            ? isOpen ? "▾" : "▸"
-            : note.type === "board" ? "🎨" : "📄"}
+        
+        <div className="flex items-center">
+          {childrenNodes.length > 0 && (
+            <div
+              className="w-5 h-5 flex items-center justify-center text-[10px] text-white/30 hover:bg-white/10 rounded transition-colors"
+              onClick={toggleOpen}
+            >
+              {isOpen ? "▾" : "▸"}
+            </div>
+          )}
+
+          {(childrenNodes.length === 0 || note.emoji) && (
+            <div
+              className="w-5 h-5 flex items-center justify-center text-sm cursor-pointer hover:bg-white/10 rounded transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEmojiPickerPos({ x: e.clientX, y: e.clientY });
+              }}
+              title="絵文字を変更"
+            >
+              {note.emoji || (note.type === "board" ? "🎨" : "📄")}
+            </div>
+          )}
         </div>
 
         {/* インライン名前変更モード */}
@@ -270,6 +347,7 @@ export const SidebarNode = ({
               onRename={onRename}
               onMove={onMove}
               onCreateChild={onCreateChild}
+              onUpdateEmoji={onUpdateEmoji}
             />
           ))}
         </div>

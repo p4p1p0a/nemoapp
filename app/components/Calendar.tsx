@@ -31,7 +31,11 @@ const FREQ_OPTIONS: { value: RecurrenceFreq; label: string }[] = [
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-const todayStr  = () => fmt(new Date());
+const todayStr = () => {
+  const d = new Date();
+  if (d.getHours() < 5) d.setDate(d.getDate() - 1);
+  return fmt(d);
+};
 const parseDate = (s: string) => { const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); };
 const toMin     = (t: string) => { const [h,m] = t.split(':').map(Number); return h*60+m; };
 const dayBefore = (s: string) => { const d=parseDate(s); d.setDate(d.getDate()-1); return fmt(d); };

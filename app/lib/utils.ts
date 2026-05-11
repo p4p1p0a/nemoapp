@@ -13,5 +13,8 @@ export const extractYouTubeIds = (text: string): string[] => {
 // 今日の日付を YYYY-MM-DD 形式で返す
 export const getTodayString = (): string => {
   const d = new Date();
+  if (d.getHours() < 5) {
+    d.setDate(d.getDate() - 1);
+  }
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };

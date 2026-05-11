@@ -9,14 +9,6 @@ interface DailyEditorProps {
   handleDailySave: () => void;
 }
 
-const COLORS = [
-  { val: '#3b82f6', label: '標準' },
-  { val: '#10b981', label: '穏やか' },
-  { val: '#f43f5e', label: 'ハッピー' },
-  { val: '#f59e0b', label: '集中' },
-  { val: '#8b5cf6', label: 'リラックス' },
-];
-
 export const DailyEditor = ({
   todayTitle,
   dailyContent,
@@ -45,9 +37,9 @@ export const DailyEditor = ({
         </p>
       </header>
 
-      <div className="relative group max-w-2xl mx-auto w-full z-10">
+      <div className="relative group max-w-3xl mx-auto w-full z-10 flex gap-4 items-start">
         <textarea
-          className="w-full bg-sidebar-bg border border-border-color rounded-xl p-8 text-base outline-none focus:border-foreground/30 transition-all resize-none min-h-[300px] leading-relaxed placeholder:text-foreground/20 shadow-xl"
+          className="flex-1 bg-sidebar-bg border border-border-color rounded-xl p-8 text-base outline-none focus:border-foreground/30 transition-all resize-none min-h-[300px] leading-relaxed placeholder:text-foreground/20 shadow-xl"
           style={{ borderTopColor: dailyColor, borderTopWidth: dailyContent ? '4px' : '1px' }}
           placeholder="ここにMarkdown感覚で入力..."
           value={dailyContent}
@@ -55,31 +47,30 @@ export const DailyEditor = ({
           autoFocus
         />
 
-        <div className="mt-6 flex flex-col items-center gap-4">
-          <div className="flex gap-4">
-            {COLORS.map(c => (
-              <button
-                key={c.val}
-                onClick={() => setDailyColor(c.val)}
-                title={c.label}
-                className={`w-10 h-10 rounded-full transition-all duration-300 border-2 ${
-                  dailyColor === c.val ? 'scale-125 border-white shadow-lg' : 'border-transparent hover:scale-110 opacity-60 hover:opacity-100'
-                }`}
-                style={{ backgroundColor: c.val }}
-              />
-            ))}
-          </div>
-          
-          <div className="flex justify-center mt-4">
-            <button
-              onClick={handleDailySave}
-              disabled={!dailyContent.trim()}
-              className="bg-accent-blue text-white px-8 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-lg flex items-center gap-2"
-            >
-              <span>✨</span> 保存してワークスペースへ
-            </button>
+        <div className="flex flex-col items-center gap-2 mt-4">
+          <label className="text-[10px] text-white/40 uppercase tracking-wider font-bold">Color</label>
+          <div 
+            className="w-10 h-10 rounded-full border-2 border-white/20 overflow-hidden relative cursor-pointer hover:scale-110 transition-transform shadow-lg"
+            title="テーマカラーを変更"
+          >
+            <input
+              type="color"
+              value={dailyColor}
+              onChange={e => setDailyColor(e.target.value)}
+              className="absolute -top-4 -left-4 w-20 h-20 cursor-pointer"
+            />
           </div>
         </div>
+      </div>
+
+      <div className="mt-8 flex justify-center z-10 relative">
+        <button
+          onClick={handleDailySave}
+          disabled={!dailyContent.trim()}
+          className="bg-accent-blue text-white px-8 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-lg flex items-center gap-2"
+        >
+          <span>✨</span> 保存してワークスペースへ
+        </button>
       </div>
     </section>
   );

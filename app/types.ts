@@ -6,6 +6,7 @@ export type Note = {
   updatedAt: number;
   type?: 'document' | 'board' | 'daily';
   color?: string;
+  emoji?: string;
   is_deleted?: boolean;
   order_index?: number;
 };
@@ -25,6 +26,13 @@ export type AppWindowData = {
   isPinned?: boolean;  // true = タスクバーから消えない（カレンダー用）
   /** maximized 前の状態を保存 */
   prevRect?: { x: number; y: number; width: number; height: number };
+};
+
+export type DesktopShortcut = {
+  id: string;
+  noteId: string;
+  x: number;
+  y: number;
 };
 
 export type Genre = {

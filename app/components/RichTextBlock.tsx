@@ -11,6 +11,7 @@ interface RichTextBlockProps {
   placeholder?: string;
   notes: Note[];
   onNavigate: (noteId: string, title: string) => void;
+  onSearchTag?: (tag: string) => void;
 }
 
 // ReadモードとEditモードを切り替えるハイブリッドブロック
@@ -20,6 +21,7 @@ export const RichTextBlock = ({
   placeholder,
   notes,
   onNavigate,
+  onSearchTag,
 }: RichTextBlockProps) => {
   const [isEditing, setIsEditing] = useState(!value);
 
@@ -45,6 +47,7 @@ export const RichTextBlock = ({
           content={value}
           notes={notes}
           onNavigate={onNavigate}
+          onSearchTag={onSearchTag}
           onContentChange={onChange}
         />
       ) : (

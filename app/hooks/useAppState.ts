@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Note, AppWindowData, WinState, CalendarEvent, Genre } from "../types";
+import { Note, AppWindowData, WinState, CalendarEvent, Genre, DesktopShortcut } from "../types";
 import { getTodayString } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -16,7 +16,7 @@ function getOrCreateFolder(updatedNotes: Note[], title: string, parentId: string
 }
 
 const CALENDAR_WIN: AppWindowData = {
-  id: '__calendar__', title: '📅 カレンダー', noteType: 'calendar',
+  id: '__calendar__', title: 'カレンダー', noteType: 'calendar',
   state: 'minimized', x: 80, y: 60, width: 1000, height: 680,
   zIndex: 1, isPinned: true,
 };
@@ -42,6 +42,7 @@ export function useAppState() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light' | 'nord' | 'sepia'>('dark');
+  const [desktopShortcuts, setDesktopShortcuts] = useState<DesktopShortcut[]>([]);
 
   // ── ウィンドウシステム ────────────────────────────────────────────────────
   const [windows, setWindows] = useState<AppWindowData[]>([CALENDAR_WIN]);
@@ -260,9 +261,11 @@ export function useAppState() {
       const savedEvents = localStorage.getItem('nemo-calendar-events');
       const savedGenres = localStorage.getItem('nemo-calendar-genres');
       const savedTheme  = localStorage.getItem('hybrid-memo-theme');
+      const savedShortcuts = localStorage.getItem('hybrid-memo-shortcuts');
       if (savedNotes)  setNotes(JSON.parse(savedNotes));
       if (savedEvents) setCalendarEvents(JSON.parse(savedEvents));
       if (savedTheme)  setTheme(savedTheme as any);
+      if (savedShortcuts) setDesktopShortcuts(JSON.parse(savedShortcuts));
       if (!savedGenres) {
         setGenres([
           { id: crypto.randomUUID(), name: '仕事',       color: '#3b82f6', updatedAt: Date.now() },
@@ -282,7 +285,8 @@ export function useAppState() {
     if (!isLoaded) return;
     localStorage.setItem('hybrid-memo-notes', JSON.stringify(notes));
     localStorage.setItem('hybrid-memo-theme', theme);
-  }, [notes, isLoaded, theme]);
+    localStorage.setItem('hybrid-memo-shortcuts', JSON.stringify(desktopShortcuts));
+  }, [notes, isLoaded, theme, desktopShortcuts]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -362,35 +366,52 @@ export function useAppState() {
   const handleMoveNote = async (id: string, newParentId: string | null, targetId?: string, position?: 'above' | 'below' | 'inside') => {
     const noteToMove = notes.find(n => n.id === id);
     if (!noteToMove) return;
+
     let finalParentId = newParentId;
-    let newOrderIndex = 0;
+
     if (targetId && position && position !== 'inside') {
       const targetNote = notes.find(n => n.id === targetId);
-      if (targetNote) {
-        finalParentId = targetNote.parentId;
-        const siblings = notes.filter(n => n.parentId === targetNote.parentId && n.id !== id && !n.is_deleted)
-          .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-        const targetIndex = siblings.findIndex(n => n.id === targetId);
-        if (targetIndex !== -1) {
-          if (position === 'above') {
-            const prev = targetIndex > 0 ? (siblings[targetIndex - 1].order_index ?? 0) : null;
-            const current = siblings[targetIndex].order_index ?? 0;
-            newOrderIndex = prev === null ? current - 100 : (prev + current) / 2;
-          } else {
-            const next = targetIndex < siblings.length - 1 ? (siblings[targetIndex + 1].order_index ?? 0) : null;
-            const current = siblings[targetIndex].order_index ?? 0;
-            newOrderIndex = next === null ? current + 100 : (current + next) / 2;
-          }
-        } else { newOrderIndex = targetNote.order_index ?? 0; }
-      }
-    } else {
-      const siblings = notes.filter(n => n.parentId === newParentId && n.id !== id && !n.is_deleted);
-      const maxOrder = siblings.reduce((max, n) => Math.max(max, n.order_index ?? 0), 0);
-      newOrderIndex = siblings.length > 0 ? maxOrder + 100 : 0;
+      if (targetNote) finalParentId = targetNote.parentId;
     }
-    const updated = { ...noteToMove, parentId: finalParentId, order_index: newOrderIndex, updatedAt: Date.now() };
-    setNotes(prev => prev.map(n => n.id === id ? updated : n));
-    if (user) await supabase.from('notes').upsert({ ...updated, user_id: user.id });
+
+    // 兄弟要素を取得（移動するノート自身は除外してソート）
+    const siblings = notes.filter(n => n.parentId === finalParentId && n.id !== id && !n.is_deleted)
+      .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+
+    // 挿入位置を決定
+    let insertIndex = siblings.length;
+    if (targetId && position && position !== 'inside') {
+      const targetIndex = siblings.findIndex(n => n.id === targetId);
+      if (targetIndex !== -1) {
+        insertIndex = position === 'above' ? targetIndex : targetIndex + 1;
+      }
+    }
+
+    // 新しい配列に挿入
+    const newSiblings = [...siblings];
+    newSiblings.splice(insertIndex, 0, noteToMove);
+
+    // すべての兄弟要素の order_index を再割り当て（100間隔で整数化し、少数や重複のバグを防ぐ）
+    const now = Date.now();
+    const updates = newSiblings.map((n, idx) => ({
+      ...n,
+      parentId: finalParentId,
+      order_index: idx * 100,
+      updatedAt: now
+    }));
+
+    // ローカルステートを更新
+    setNotes(prev => {
+      const updatedMap = new Map(updates.map(u => [u.id, u]));
+      return prev.map(n => updatedMap.has(n.id) ? updatedMap.get(n.id)! : n);
+    });
+
+    // データベースを更新（更新対象が複数のため配列でupsert）
+    if (user) {
+      const dbUpdates = updates.map(u => ({ ...u, user_id: user.id }));
+      const { error } = await supabase.from('notes').upsert(dbUpdates);
+      if (error) setLastError(`Move note error: ${error.message}`);
+    }
   };
 
   const handleDeleteNote = async (id: string, e: React.MouseEvent) => {
@@ -411,6 +432,17 @@ export function useAppState() {
       if (error) setLastError(`Delete note error: ${error.message}`);
     }
     idsToDelete.forEach(did => closeWindow(did));
+  };
+
+  const handleUpdateEmoji = (id: string, emoji: string) => {
+    const now = Date.now();
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, emoji, updatedAt: now } : n));
+    if (user) {
+      const note = notes.find(n => n.id === id);
+      if (note) supabase.from('notes').upsert({ ...note, emoji, updatedAt: now, user_id: user.id }).then(({ error }) => {
+        if (error) setLastError(`Emoji update error: ${error.message}`);
+      });
+    }
   };
 
   const isDescendant = (nodeId: string, targetId: string): boolean => {
@@ -500,10 +532,11 @@ export function useAppState() {
     // note handlers
     handleDailySave, handleCreateNewNote,
     handleUpdateTitle, handleUpdateContent, handleDeleteNote,
-    handleMoveNote, updateNoteColor,
+    handleMoveNote, updateNoteColor, handleUpdateEmoji,
     isDescendant, openOrCreateDailyNote,
     // computed
     todayTitle, hasWrittenToday, rootNotes,
+    desktopShortcuts, setDesktopShortcuts,
     // legacy compat (used inside handlers)
     activateNote: openWindow,
   };

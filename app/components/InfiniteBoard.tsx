@@ -334,8 +334,8 @@ export default function InfiniteBoard({
     setSelectedIds(new Set());
   }, [selectedIds, saveToHistory, updateContent]);
 
-  const commitHistoryOnPointerUp = useCallback(() => {
-    const newStr = JSON.stringify(dataRef.current);
+  const commitHistoryOnPointerUp = useCallback((newState?: BoardData) => {
+    const newStr = newState ? JSON.stringify(newState) : JSON.stringify(dataRef.current);
     if (actionStartStateStr.current && actionStartStateStr.current !== newStr) {
       saveToHistory(actionStartStateStr.current);
     }
@@ -547,6 +547,32 @@ export default function InfiniteBoard({
     };
   };
 
+  const initiateDrag = useCallback((e: React.PointerEvent, targetId: string) => {
+    const ids = getGroupIds(targetId);
+    let currentIds: string[];
+    
+    if (e.shiftKey) {
+      const nextSet = new Set(selectedIds);
+      const alreadySelected = ids.every(i => nextSet.has(i));
+      if (alreadySelected) ids.forEach(i => nextSet.delete(i));
+      else ids.forEach(i => nextSet.add(i));
+      setSelectedIds(nextSet);
+      currentIds = Array.from(nextSet);
+    } else if (!selectedIds.has(targetId)) {
+      setSelectedIds(new Set(ids));
+      currentIds = ids;
+    } else {
+      currentIds = Array.from(selectedIds);
+    }
+
+    if (currentIds.length === 0) return;
+
+    const starts: Record<string, any> = {};
+    (dataRef.current.nodes || []).filter(n => currentIds.includes(n.id)).forEach(n => starts[n.id] = { x: n.x, y: n.y, w: n.width, h: n.height });
+    dataRef.current.strokes.filter(s => currentIds.includes(s.id)).forEach(s => starts[s.id] = { points: [...s.points] });
+    setActiveNodeAction({ ids: currentIds, action: 'drag', startX: e.clientX, startY: e.clientY, startStates: starts });
+  }, [selectedIds, getGroupIds]);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     actionStartStateStr.current = JSON.stringify(dataRef.current);
     setContextMenu(null);
@@ -568,16 +594,7 @@ export default function InfiniteBoard({
       const threshold = 8 / camera.z;
       const hit = dataRef.current.strokes.find(s => isNearStroke(s, pt.x, pt.y, threshold));
       if (hit) {
-        selectItem(hit.id, e.shiftKey);
-        // ドラッグ開始
-        const ids = e.shiftKey ? [...selectedIds, ...getGroupIds(hit.id)] : getGroupIds(hit.id);
-        const starts: Record<string, any> = {};
-        dataRef.current.strokes.filter(s => ids.includes(s.id)).forEach(s => {
-          starts[s.id] = { points: [...s.points] };
-        });
-        setActiveNodeAction({
-          ids, action: 'drag', startX: e.clientX, startY: e.clientY, startStates: starts
-        });
+        initiateDrag(e, hit.id);
         return;
       }
     }
@@ -768,9 +785,11 @@ export default function InfiniteBoard({
           id: crypto.randomUUID(), fromNodeId: draggingEdge.fromNodeId,
           fromSide: draggingEdge.fromSide, toNodeId: hitNode.id, toSide,
         };
-        saveToHistory(JSON.stringify(dataRef.current));
         const nd = { ...dataRef.current, edges: [...(dataRef.current.edges || []), newEdge] };
+        commitHistoryOnPointerUp(nd);
         setData(nd); updateContent(JSON.stringify(nd));
+      } else {
+        commitHistoryOnPointerUp();
       }
       setDraggingEdge(null); return;
     }
@@ -795,7 +814,9 @@ export default function InfiniteBoard({
         const smoothed = smoothStroke(currentStroke, 2);
         const newStroke: Stroke = { id: crypto.randomUUID(), points: smoothed, color: currentColor, width: currentWidth };
         const nd = { ...dataRef.current, strokes: [...dataRef.current.strokes, newStroke] };
+        commitHistoryOnPointerUp(nd);
         setData(nd); setCurrentStroke([]); updateContent(JSON.stringify(nd));
+      } else {
         commitHistoryOnPointerUp();
       }
       return;
@@ -806,6 +827,7 @@ export default function InfiniteBoard({
       (e.target as HTMLElement).releasePointerCapture(e.pointerId);
       updateContent(JSON.stringify(dataRef.current));
       commitHistoryOnPointerUp();
+      return;
     }
 
     if (shapeStartPt && (tool === 'rect' || tool === 'ellipse')) {
@@ -819,13 +841,14 @@ export default function InfiniteBoard({
           id: crypto.randomUUID(), type: tool as 'rect' | 'ellipse', data: '',
           x, y, width: w, height: h, color: currentColor, fillColor: currentFillColor, strokeWidth: currentShapeStrokeWidth,
         };
-        saveToHistory(JSON.stringify(dataRef.current));
         const nd = { ...dataRef.current, nodes: [...(dataRef.current.nodes || []), nw] };
+        commitHistoryOnPointerUp(nd);
         setData(nd); updateContent(JSON.stringify(nd));
         setSelectedIds(new Set([nw.id]));
+      } else {
+        commitHistoryOnPointerUp();
       }
       setShapeStartPt(null); setShapeCurPt(null);
-      commitHistoryOnPointerUp();
     }
   };
 
@@ -1024,15 +1047,16 @@ export default function InfiniteBoard({
           const noteId = e.dataTransfer.getData("application/nemo-note-id");
           if (noteId) {
             e.preventDefault();
+            e.stopPropagation();
             const pt = getCanvasPoint(e as unknown as React.PointerEvent);
             const newNode: RectNode = {
               id: crypto.randomUUID(),
               type: 'note',
               data: noteId,
-              x: snap(pt.x - 125, isSnapToGrid),
-              y: snap(pt.y - 80, isSnapToGrid),
-              width: 250,
-              height: 160,
+              x: snap(pt.x - 40, isSnapToGrid),
+              y: snap(pt.y - 40, isSnapToGrid),
+              width: 80,
+              height: 100,
             };
             saveToHistory(JSON.stringify(dataRef.current));
             const nd = { ...dataRef.current, nodes: [...(dataRef.current.nodes || []), newNode] };
@@ -1059,14 +1083,7 @@ export default function InfiniteBoard({
                 if (tool !== 'select' && !(tool === 'text' && node.type === 'text')) return;
                 e.stopPropagation();
                 (e.target as HTMLElement).setPointerCapture(e.pointerId);
-                const ids = getGroupIds(node.id);
-                if (!e.shiftKey && !selectedIds.has(node.id)) setSelectedIds(new Set(ids));
-                else if (e.shiftKey) selectItem(node.id, true);
-                const currentIds = Array.from(selectedIds.has(node.id) ? selectedIds : new Set(ids));
-                const starts: Record<string, any> = {};
-                (dataRef.current.nodes || []).filter(n => currentIds.includes(n.id)).forEach(n => starts[n.id] = { x: n.x, y: n.y, w: n.width, h: n.height });
-                dataRef.current.strokes.filter(s => currentIds.includes(s.id)).forEach(s => starts[s.id] = { points: [...s.points] });
-                setActiveNodeAction({ ids: currentIds, action: 'drag', startX: e.clientX, startY: e.clientY, startStates: starts });
+                initiateDrag(e, node.id);
               }}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, targetId: node.id, type: 'node' }); }}
             >
@@ -1112,36 +1129,32 @@ export default function InfiniteBoard({
               {node.type === 'rect' && <div className="w-full h-full" style={{ background: node.fillColor, border: `${node.strokeWidth}px solid ${node.color}` }} />}
               {node.type === 'ellipse' && <div className="w-full h-full rounded-full" style={{ background: node.fillColor, border: `${node.strokeWidth}px solid ${node.color}` }} />}
               
-              {/* ── ノートカード ── */}
+              {/* ── ノートショートカット ── */}
               {node.type === 'note' && (() => {
                 const note = notes.find(n => n.id === node.data);
-                const preview = note?.content.slice(0, 100).replace(/(\r\n|\n|\r)/gm, " ") || '内容がありません';
+                const icon = note?.emoji || (note?.type === 'board' ? '🎨' : '📄');
                 return (
                   <div
-                    className={`w-full h-full p-4 rounded-2xl border-2 shadow-xl flex flex-col gap-2 overflow-hidden transition-all bg-card-bg group
-                      ${selectedIds.has(node.id) ? 'border-blue-500 ring-4 ring-blue-500/10 scale-[1.02]' : 'border-border-color hover:border-white/20'}`}
-                    style={{ backdropFilter: 'blur(10px)' }}
+                    className={`w-full h-full flex flex-col items-center justify-start gap-1 p-1 rounded-xl transition-all group
+                      ${selectedIds.has(node.id) ? 'bg-blue-500/30 ring-2 ring-blue-500' : 'hover:bg-white/10'}`}
+                    onDoubleClick={e => { e.stopPropagation(); activateNote(note?.id || null); }}
+                    title="ダブルクリックで開く"
                   >
-                    <div className="flex items-start justify-between gap-2 border-b border-border-color pb-1">
-                       <span className="text-xl leading-none flex-shrink-0">{note?.type === 'board' ? '🎨' : '📄'}</span>
-                       <h3 className="flex-1 text-[13px] font-bold text-foreground truncate mt-1">{note?.title || '不明なノート'}</h3>
-                       <button
-                         className="p-1 px-1.5 rounded bg-white/5 hover:bg-white/10 text-blue-400 hover:text-white transition-all opacity-0 group-hover:opacity-100 text-xs"
-                         onClick={e => { e.stopPropagation(); activateNote(note?.id || null); }}
-                         title="ノートを開く"
-                       >
-                         開く
-                       </button>
+                    <div className="w-12 h-12 flex-shrink-0 flex items-center justify-center text-3xl bg-black/40 backdrop-blur-md rounded-2xl shadow-lg border border-white/10 group-hover:scale-105 transition-transform">
+                      {icon}
                     </div>
-                    <p className="flex-1 text-[11px] text-foreground/50 leading-relaxed overflow-hidden line-clamp-4 italic py-1">
-                      {preview}{(note?.content?.length ?? 0) > 100 ? '...' : ''}
-                    </p>
+                    <div className="w-full text-center">
+                      <span className="text-[11px] font-medium text-white/90 leading-tight line-clamp-2 px-1 break-words drop-shadow-md" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+                        {note?.title || '不明なノート'}
+                      </span>
+                    </div>
                   </div>
                 );
               })()}
               
               {selectedIds.has(node.id) && selectedIds.size === 1 && RESIZE_HANDLES.map(h => (
                 <div key={h.dir} className="absolute w-2 h-2 bg-blue-500 border border-white" style={{ ...h.style, cursor: h.cursor }} onPointerDown={e => {
+                  if (tool !== 'select') return;
                   e.stopPropagation();
                   setActiveNodeAction({ ids: [node.id], action: 'resize', handle: h.dir, startX: e.clientX, startY: e.clientY, startStates: { [node.id]: { x: node.x, y: node.y, w: node.width, h: node.height } } });
                 }} />
@@ -1156,7 +1169,7 @@ export default function InfiniteBoard({
           <svg className="absolute inset-0 w-full h-full overflow-visible">
             {data.strokes.map(s => (
               <g key={s.id} 
-                onPointerDown={e => { e.stopPropagation(); selectItem(s.id, e.shiftKey); }}
+                onPointerDown={e => { if (tool !== 'select') return; e.stopPropagation(); initiateDrag(e, s.id); }}
                 onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, targetId: s.id, type: 'stroke' }); }}
               >
                 <path d={renderStroke(s.points)} stroke={selectedIds.has(s.id) ? 'rgba(59,130,246,0.5)' : 'transparent'} strokeWidth={s.width + 12} fill="none" strokeLinecap="round" style={{ cursor: 'pointer', pointerEvents: 'stroke' }} />
@@ -1180,15 +1193,15 @@ export default function InfiniteBoard({
               const d = `M${fp.x},${fp.y} C${cp.cp1.x},${cp.cp1.y} ${cp.cp2.x},${cp.cp2.y} ${tp.x},${tp.y}`;
               return (
                 <g key={edge.id}
-                  onPointerDown={e => { e.stopPropagation(); selectItem(edge.id, e.shiftKey); }}
+                  onPointerDown={e => { if (tool !== 'select') return; e.stopPropagation(); initiateDrag(e, edge.id); }}
                   onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, targetId: edge.id, type: 'edge' }); }}
                 >
                   <path d={d} stroke="transparent" strokeWidth={15} fill="none" style={{ cursor: 'pointer', pointerEvents: 'stroke' }} />
                   <path d={d} stroke={selectedIds.has(edge.id) ? '#3b82f6' : (edge.color || '#666')} strokeWidth={edge.strokeWidth || 2} fill="none" markerEnd={(edge.showArrow ?? true) ? "url(#arrow)" : ""} style={{ color: edge.color || '#666' }} />
                   {selectedIds.has(edge.id) && (
                     <>
-                      <circle cx={cp.cp1.x} cy={cp.cp1.y} r={5} fill="#3b82f6" style={{ cursor: 'move', pointerEvents: 'all' }} onPointerDown={e => { e.stopPropagation(); setDraggingCP({ edgeId: edge.id, which: 'cp1' }); }} />
-                      <circle cx={cp.cp2.x} cy={cp.cp2.y} r={5} fill="#3b82f6" style={{ cursor: 'move', pointerEvents: 'all' }} onPointerDown={e => { e.stopPropagation(); setDraggingCP({ edgeId: edge.id, which: 'cp2' }); }} />
+                      <circle cx={cp.cp1.x} cy={cp.cp1.y} r={5} fill="#3b82f6" style={{ cursor: 'move', pointerEvents: 'all' }} onPointerDown={e => { if (tool !== 'select') return; e.stopPropagation(); setDraggingCP({ edgeId: edge.id, which: 'cp1' }); }} />
+                      <circle cx={cp.cp2.x} cy={cp.cp2.y} r={5} fill="#3b82f6" style={{ cursor: 'move', pointerEvents: 'all' }} onPointerDown={e => { if (tool !== 'select') return; e.stopPropagation(); setDraggingCP({ edgeId: edge.id, which: 'cp2' }); }} />
                     </>
                   )}
                 </g>

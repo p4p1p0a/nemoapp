@@ -10,13 +10,14 @@ type InlineToken =
   | { type: 'code';     text: string }
   | { type: 'wikilink'; title: string; noteId: string | null }
   | { type: 'url';      href: string }
+  | { type: 'tag';      tag: string }
   | { type: 'text';     text: string };
 
 // ── Inline parser ─────────────────────────────────────────────────────────────
 function parseInline(text: string, notes: Note[]): InlineToken[] {
   const tokens: InlineToken[] = [];
   // Order matters: bold before italic to avoid false match on single *
-  const regex = /(\*\*(.+?)\*\*|\*([^*]+)\*|`([^`]+)`|\[\[([^\]]+)\]\]|(https?:\/\/[^\s]+))/g;
+  const regex = /(\*\*(.+?)\*\*|\*([^*]+)\*|`([^`]+)`|\[\[([^\]]+)\]\]|(https?:\/\/[^\s]+)|(#([^\s,.\!?\[\](){}]+)))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -36,6 +37,8 @@ function parseInline(text: string, notes: Note[]): InlineToken[] {
       tokens.push({ type: 'wikilink', title, noteId: note?.id ?? null });
     } else if (match[6] !== undefined) {
       tokens.push({ type: 'url', href: match[6] });
+    } else if (match[8] !== undefined) {
+      tokens.push({ type: 'tag', tag: match[8] });
     }
     lastIndex = regex.lastIndex;
   }
@@ -47,11 +50,12 @@ function parseInline(text: string, notes: Note[]): InlineToken[] {
 
 // ── Inline token renderer ─────────────────────────────────────────────────────
 function InlineTokens({
-  tokens, notes, onNavigate,
+  tokens, notes, onNavigate, onSearchTag
 }: {
   tokens: InlineToken[];
   notes: Note[];
   onNavigate: (noteId: string, title: string) => void;
+  onSearchTag?: (tag: string) => void;
 }) {
   return (
     <>
@@ -103,6 +107,20 @@ function InlineTokens({
             </a>
           );
 
+        if (token.type === 'tag')
+          return (
+            <button
+              key={i}
+              className="text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-1 rounded transition-colors break-words text-left"
+              onClick={e => {
+                e.stopPropagation();
+                if (onSearchTag) onSearchTag(token.tag);
+              }}
+            >
+              #{token.tag}
+            </button>
+          );
+
         // plain text
         return <span key={i}>{(token as { type: 'text'; text: string }).text}</span>;
       })}
@@ -115,11 +133,13 @@ export function MarkdownRenderer({
   content,
   notes,
   onNavigate,
+  onSearchTag,
   onContentChange,
 }: {
   content: string;
   notes: Note[];
   onNavigate: (noteId: string, title: string) => void;
+  onSearchTag?: (tag: string) => void;
   onContentChange?: (newContent: string) => void;
 }) {
   const lines = content.split('\n');
@@ -141,21 +161,21 @@ export function MarkdownRenderer({
         if (line.startsWith('# ')) {
           return (
             <h1 key={lineIndex} className="text-2xl font-bold text-white mt-6 mb-2 pb-2 border-b border-white/10">
-              <InlineTokens tokens={parseInline(line.slice(2), notes)} notes={notes} onNavigate={onNavigate} />
+              <InlineTokens tokens={parseInline(line.slice(2), notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
             </h1>
           );
         }
         if (line.startsWith('## ')) {
           return (
             <h2 key={lineIndex} className="text-xl font-bold text-white mt-5 mb-1">
-              <InlineTokens tokens={parseInline(line.slice(3), notes)} notes={notes} onNavigate={onNavigate} />
+              <InlineTokens tokens={parseInline(line.slice(3), notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
             </h2>
           );
         }
         if (line.startsWith('### ')) {
           return (
             <h3 key={lineIndex} className="text-lg font-semibold text-white/90 mt-4 mb-1">
-              <InlineTokens tokens={parseInline(line.slice(4), notes)} notes={notes} onNavigate={onNavigate} />
+              <InlineTokens tokens={parseInline(line.slice(4), notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
             </h3>
           );
         }
@@ -175,7 +195,7 @@ export function MarkdownRenderer({
                 onClick={(e) => { e.stopPropagation(); toggleTodo(lineIndex, false); }}
               />
               <span className="text-white/80">
-                <InlineTokens tokens={parseInline(unchecked[1], notes)} notes={notes} onNavigate={onNavigate} />
+                <InlineTokens tokens={parseInline(unchecked[1], notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
               </span>
             </div>
           );
@@ -195,7 +215,7 @@ export function MarkdownRenderer({
                 </svg>
               </button>
               <span className="text-white/35 line-through">
-                <InlineTokens tokens={parseInline(checked[1], notes)} notes={notes} onNavigate={onNavigate} />
+                <InlineTokens tokens={parseInline(checked[1], notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
               </span>
             </div>
           );
@@ -207,7 +227,7 @@ export function MarkdownRenderer({
             <div key={lineIndex} className="flex items-start gap-2.5 py-0.5">
               <span className="text-white/40 mt-2 text-[7px] flex-shrink-0 leading-none">●</span>
               <span className="text-white/80">
-                <InlineTokens tokens={parseInline(line.slice(2), notes)} notes={notes} onNavigate={onNavigate} />
+                <InlineTokens tokens={parseInline(line.slice(2), notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
               </span>
             </div>
           );
@@ -223,7 +243,7 @@ export function MarkdownRenderer({
         return (
           <div key={lineIndex} className="flex flex-col gap-2 py-0.5">
             <p className="text-white/90">
-              <InlineTokens tokens={parseInline(line, notes)} notes={notes} onNavigate={onNavigate} />
+              <InlineTokens tokens={parseInline(line, notes)} notes={notes} onNavigate={onNavigate} onSearchTag={onSearchTag} />
             </p>
             {yIds.length > 0 && (
               <div className="my-2 rounded-2xl overflow-hidden shadow-2xl border border-white/10" style={{ maxWidth: '640px', aspectRatio: '16/9' }}>
